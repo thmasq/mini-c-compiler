@@ -22,7 +22,7 @@ LEXER_C = $(SRCDIR)/lexer.c
 PARSER_C = $(SRCDIR)/parser.c
 PARSER_H = $(SRCDIR)/parser.h
 
-.PHONY: all clean test test-advanced dirs help install-tests
+.PHONY: all clean test test-advanced dirs help install-tests test-exec
 
 all: dirs $(TARGET)
 
@@ -87,49 +87,93 @@ install-tests:
 	@echo "}" >> $(TESTDIR)/advanced/fibonacci.c
 	@echo "Created $(TESTDIR)/advanced/fibonacci.c"
 
-# Simple test using basic arithmetic
+# Simple test using basic arithmetic (LLVM IR only)
 test: $(TARGET)
-	@echo "=== Running Basic Test ==="
+	@echo "=== Running Basic Test (LLVM IR) ==="
 	@if [ ! -f $(TESTDIR)/basic/arithmetic.c ]; then \
 		echo "Test files not found. Run 'make install-tests' first."; \
 		exit 1; \
 	fi
-	@echo "Compiling $(TESTDIR)/basic/arithmetic.c..."
-	./$(TARGET) $(TESTDIR)/basic/arithmetic.c -o $(BUILDDIR)/test_arithmetic.ll
+	@echo "Compiling $(TESTDIR)/basic/arithmetic.c to LLVM IR..."
+	./$(TARGET) -S $(TESTDIR)/basic/arithmetic.c -o $(BUILDDIR)/test_arithmetic.ll
 	@echo ""
 	@echo "Generated LLVM IR:"
 	@cat $(BUILDDIR)/test_arithmetic.ll
 
+# Test with executable generation
+test-exec: $(TARGET)
+	@echo "=== Running Basic Test (Executable) ==="
+	@if [ ! -f $(TESTDIR)/basic/arithmetic.c ]; then \
+		echo "Test files not found. Run 'make install-tests' first."; \
+		exit 1; \
+	fi
+	@echo "Compiling $(TESTDIR)/basic/arithmetic.c to executable..."
+	./$(TARGET) -c $(TESTDIR)/basic/arithmetic.c -o $(BUILDDIR)/test_arithmetic
+	@echo "Running executable..."
+	$(BUILDDIR)/test_arithmetic
+	@echo "Exit code: $$?"
+
 # Advanced test with functions and control flow
 test-advanced: $(TARGET)
-	@echo "=== Running Advanced Test ==="
+	@echo "=== Running Advanced Test (LLVM IR) ==="
 	@if [ ! -f $(TESTDIR)/advanced/fibonacci.c ]; then \
 		echo "Test files not found. Run 'make install-tests' first."; \
 		exit 1; \
 	fi
-	@echo "Compiling $(TESTDIR)/advanced/fibonacci.c..."
-	./$(TARGET) $(TESTDIR)/advanced/fibonacci.c -o $(BUILDDIR)/test_fibonacci.ll
+	@echo "Compiling $(TESTDIR)/advanced/fibonacci.c to LLVM IR..."
+	./$(TARGET) -S $(TESTDIR)/advanced/fibonacci.c -o $(BUILDDIR)/test_fibonacci.ll
 	@echo ""
 	@echo "Generated LLVM IR (first 50 lines):"
 	@head -50 $(BUILDDIR)/test_fibonacci.ll
 
+# Advanced test with executable
+test-advanced-exec: $(TARGET)
+	@echo "=== Running Advanced Test (Executable) ==="
+	@if [ ! -f $(TESTDIR)/advanced/fibonacci.c ]; then \
+		echo "Test files not found. Run 'make install-tests' first."; \
+		exit 1; \
+	fi
+	@echo "Compiling $(TESTDIR)/advanced/fibonacci.c to executable..."
+	./$(TARGET) -c $(TESTDIR)/advanced/fibonacci.c -o $(BUILDDIR)/test_fibonacci
+	@echo "Running executable..."
+	$(BUILDDIR)/test_fibonacci
+	@echo "Exit code: $$?"
+
 # Test with example file
 test-example: $(TARGET)
-	@echo "=== Running Example Test ==="
+	@echo "=== Running Example Test (LLVM IR) ==="
 	@if [ ! -f $(EXAMPLEDIR)/sample.c ]; then \
 		echo "Example file not found at $(EXAMPLEDIR)/sample.c"; \
 		exit 1; \
 	fi
-	@echo "Compiling $(EXAMPLEDIR)/sample.c..."
-	./$(TARGET) $(EXAMPLEDIR)/sample.c -o $(BUILDDIR)/test_example.ll
+	@echo "Compiling $(EXAMPLEDIR)/sample.c to LLVM IR..."
+	./$(TARGET) -S $(EXAMPLEDIR)/sample.c -o $(BUILDDIR)/test_example.ll
 	@echo ""
 	@echo "Generated LLVM IR (first 50 lines):"
 	@head -50 $(BUILDDIR)/test_example.ll
 
+# Test example with executable
+test-example-exec: $(TARGET)
+	@echo "=== Running Example Test (Executable) ==="
+	@if [ ! -f $(EXAMPLEDIR)/sample.c ]; then \
+		echo "Example file not found at $(EXAMPLEDIR)/sample.c"; \
+		exit 1; \
+	fi
+	@echo "Compiling $(EXAMPLEDIR)/sample.c to executable..."
+	./$(TARGET) -c $(EXAMPLEDIR)/sample.c -o $(BUILDDIR)/test_example
+	@echo "Running executable..."
+	$(BUILDDIR)/test_example
+	@echo "Exit code: $$?"
+
 # Run all tests
 test-all: test test-advanced test-example
 	@echo ""
-	@echo "=== All Tests Complete ==="
+	@echo "=== All LLVM IR Tests Complete ==="
+
+# Run all executable tests
+test-all-exec: test-exec test-advanced-exec test-example-exec
+	@echo ""
+	@echo "=== All Executable Tests Complete ==="
 
 # Clean up generated files
 clean:
@@ -166,18 +210,25 @@ help:
 	@echo "  release           - Build optimized version"
 	@echo "  rebuild           - Clean and build"
 	@echo ""
-	@echo "Test targets:"
-	@echo "  test              - Run basic arithmetic test"
-	@echo "  test-advanced     - Run advanced fibonacci test"
-	@echo "  test-example      - Run example program test"
-	@echo "  test-all          - Run all tests"
+	@echo "Test targets (LLVM IR generation):"
+	@echo "  test              - Run basic arithmetic test (IR only)"
+	@echo "  test-advanced     - Run advanced fibonacci test (IR only)"
+	@echo "  test-example      - Run example program test (IR only)"
+	@echo "  test-all          - Run all IR generation tests"
+	@echo ""
+	@echo "Test targets (Executable generation):"
+	@echo "  test-exec         - Run basic test with executable"
+	@echo "  test-advanced-exec- Run advanced test with executable"
+	@echo "  test-example-exec - Run example test with executable"
+	@echo "  test-all-exec     - Run all executable tests"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  clean             - Remove all generated files"
 	@echo "  clean-build       - Remove only build artifacts"
 	@echo ""
 	@echo "Usage:"
-	@echo "  ./$(TARGET) input.c -o output.ll"
+	@echo "  ./$(TARGET) -S input.c -o output.ll    # Generate LLVM IR"
+	@echo "  ./$(TARGET) -c input.c -o executable   # Compile to executable"
 	@echo ""
 	@echo "Directory structure:"
 	@echo "  $(SRCDIR)/           - Source code"
