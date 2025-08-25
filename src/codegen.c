@@ -22,6 +22,8 @@ typedef struct symbol {
     char *name;
     char *type;
     int is_global;
+    int is_parameter;
+    int scope_level;
     struct symbol *next;
 } symbol_t;
 
@@ -30,18 +32,54 @@ typedef struct {
     FILE *output;
     int label_counter;
     int temp_counter;
+    int scope_counter;
     symbol_t *symbols;
     char *current_function;
+    int in_return_block;
 } codegen_context_t;
 
 static codegen_context_t ctx;
 
+// Helper function to check if an AST node is a comparison operation
+static int is_comparison_op(ast_node_t *node) {
+    if (node && node->type == AST_BINARY_OP) {
+        binary_op_t op = node->data.binary_op.op;
+        return (op >= OP_EQ && op <= OP_GE);  // All comparison operators
+    }
+    return 0;
+}
+
+// Scope management functions
+static void enter_scope() {
+    ctx.scope_counter++;
+}
+
+static void exit_scope() {
+    ctx.scope_counter--;
+    
+    // Remove symbols from this scope level
+    symbol_t **current = &ctx.symbols;
+    while (*current) {
+        if ((*current)->scope_level > ctx.scope_counter) {
+            symbol_t *to_remove = *current;
+            *current = (*current)->next;
+            free(to_remove->name);
+            free(to_remove->type);
+            free(to_remove);
+        } else {
+            current = &(*current)->next;
+        }
+    }
+}
+
 // Symbol table functions
-static void add_symbol(const char *name, const char *type, int is_global) {
+static void add_symbol(const char *name, const char *type, int is_global, int is_parameter) {
     symbol_t *sym = malloc(sizeof(symbol_t));
     sym->name = string_duplicate(name);
     sym->type = string_duplicate(type);
     sym->is_global = is_global;
+    sym->is_parameter = is_parameter;
+    sym->scope_level = ctx.scope_counter;
     sym->next = ctx.symbols;
     ctx.symbols = sym;
 }
@@ -82,7 +120,6 @@ static int generate_expression(ast_node_t *node) {
     switch (node->type) {
         case AST_NUMBER: {
             // Constants don't need temp registers, just return the value
-            // We'll handle this differently for different contexts
             return node->data.number.value;
         }
         
@@ -94,9 +131,17 @@ static int generate_expression(ast_node_t *node) {
             }
             
             int temp = get_next_temp();
-            fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s\n", 
-                    temp, get_llvm_type(sym->type), get_llvm_type(sym->type), 
-                    node->data.identifier.name);
+            
+            // FIX: Use .addr suffix for parameters
+            if (sym->is_parameter) {
+                fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s.addr\n", 
+                        temp, get_llvm_type(sym->type), get_llvm_type(sym->type), 
+                        node->data.identifier.name);
+            } else {
+                fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s\n", 
+                        temp, get_llvm_type(sym->type), get_llvm_type(sym->type), 
+                        node->data.identifier.name);
+            }
             return temp;
         }
         
@@ -134,13 +179,8 @@ static int generate_expression(ast_node_t *node) {
                 snprintf(right_operand, sizeof(right_operand), "%%t%d", right);
             }
             
-            if (node->data.binary_op.op >= OP_EQ) {
-                fprintf(ctx.output, "  %%t%d = %s i32 %s, %s\n", 
-                        temp, op_str, left_operand, right_operand);
-            } else {
-                fprintf(ctx.output, "  %%t%d = %s i32 %s, %s\n", 
-                        temp, op_str, left_operand, right_operand);
-            }
+            fprintf(ctx.output, "  %%t%d = %s i32 %s, %s\n", 
+                    temp, op_str, left_operand, right_operand);
             
             return temp;
         }
@@ -204,15 +244,16 @@ static int generate_expression(ast_node_t *node) {
 }
 
 static void generate_statement(ast_node_t *node) {
-    if (!node) return;
+    if (!node || ctx.in_return_block) return;
     
     switch (node->type) {
         case AST_DECLARATION: {
-            add_symbol(node->data.declaration.name, node->data.declaration.type, 0);
+            add_symbol(node->data.declaration.name, node->data.declaration.type, 0, 0);
+            
+            const char *var_name = node->data.declaration.name;
             
             fprintf(ctx.output, "  %%%s = alloca %s\n", 
-                    node->data.declaration.name, 
-                    get_llvm_type(node->data.declaration.type));
+                    var_name, get_llvm_type(node->data.declaration.type));
             
             if (node->data.declaration.init) {
                 int init_value = generate_expression(node->data.declaration.init);
@@ -221,12 +262,12 @@ static void generate_statement(ast_node_t *node) {
                     fprintf(ctx.output, "  store %s %d, %s* %%%s\n", 
                             get_llvm_type(node->data.declaration.type), init_value,
                             get_llvm_type(node->data.declaration.type), 
-                            node->data.declaration.name);
+                            var_name);
                 } else {
                     fprintf(ctx.output, "  store %s %%t%d, %s* %%%s\n", 
                             get_llvm_type(node->data.declaration.type), init_value,
                             get_llvm_type(node->data.declaration.type), 
-                            node->data.declaration.name);
+                            var_name);
                 }
             }
             break;
@@ -235,12 +276,27 @@ static void generate_statement(ast_node_t *node) {
         case AST_ASSIGNMENT: {
             int value = generate_expression(node->data.assignment.value);
             
-            if (node->data.assignment.value->type == AST_NUMBER) {
-                fprintf(ctx.output, "  store i32 %d, i32* %%%s\n", 
-                        value, node->data.assignment.name);
+            symbol_t *sym = find_symbol(node->data.assignment.name);
+            const char *target_name = node->data.assignment.name;
+            
+            if (sym && sym->is_parameter) {
+                // For parameters, store to .addr
+                if (node->data.assignment.value->type == AST_NUMBER) {
+                    fprintf(ctx.output, "  store i32 %d, i32* %%%s.addr\n", 
+                            value, target_name);
+                } else {
+                    fprintf(ctx.output, "  store i32 %%t%d, i32* %%%s.addr\n", 
+                            value, target_name);
+                }
             } else {
-                fprintf(ctx.output, "  store i32 %%t%d, i32* %%%s\n", 
-                        value, node->data.assignment.name);
+                // For local variables, store normally
+                if (node->data.assignment.value->type == AST_NUMBER) {
+                    fprintf(ctx.output, "  store i32 %d, i32* %%%s\n", 
+                            value, target_name);
+                } else {
+                    fprintf(ctx.output, "  store i32 %%t%d, i32* %%%s\n", 
+                            value, target_name);
+                }
             }
             break;
         }
@@ -251,16 +307,22 @@ static void generate_statement(ast_node_t *node) {
             int else_label = get_next_label();
             int end_label = get_next_label();
             
-            char cond_str[32];
-            if (node->data.if_stmt.condition->type == AST_NUMBER) {
-                snprintf(cond_str, sizeof(cond_str), "%d", cond);
+            // Smart boolean conversion - avoid double conversion for comparison ops
+            int bool_temp;
+            if (is_comparison_op(node->data.if_stmt.condition)) {
+                // Condition already returns i1, use directly
+                bool_temp = cond;
             } else {
-                snprintf(cond_str, sizeof(cond_str), "%%t%d", cond);
+                // Need to convert to boolean
+                bool_temp = get_next_temp();
+                char cond_str[32];
+                if (node->data.if_stmt.condition->type == AST_NUMBER) {
+                    snprintf(cond_str, sizeof(cond_str), "%d", cond);
+                } else {
+                    snprintf(cond_str, sizeof(cond_str), "%%t%d", cond);
+                }
+                fprintf(ctx.output, "  %%t%d = icmp ne i32 %s, 0\n", bool_temp, cond_str);
             }
-            
-            // Convert condition to i1
-            int bool_temp = get_next_temp();
-            fprintf(ctx.output, "  %%t%d = icmp ne i32 %s, 0\n", bool_temp, cond_str);
             
             if (node->data.if_stmt.else_stmt) {
                 fprintf(ctx.output, "  br i1 %%t%d, label %%L%d, label %%L%d\n", 
@@ -271,13 +333,30 @@ static void generate_statement(ast_node_t *node) {
             }
             
             fprintf(ctx.output, "L%d:\n", then_label);
+            enter_scope();
+            int prev_return_state = ctx.in_return_block;
+            ctx.in_return_block = 0;
             generate_statement(node->data.if_stmt.then_stmt);
-            fprintf(ctx.output, "  br label %%L%d\n", end_label);
+            // Only generate branch if we haven't returned
+            if (!ctx.in_return_block) {
+                fprintf(ctx.output, "  br label %%L%d\n", end_label);
+            }
+            int then_returned = ctx.in_return_block;
+            ctx.in_return_block = prev_return_state;
+            exit_scope();
             
             if (node->data.if_stmt.else_stmt) {
                 fprintf(ctx.output, "L%d:\n", else_label);
+                enter_scope();
+                prev_return_state = ctx.in_return_block;
+                ctx.in_return_block = 0;
                 generate_statement(node->data.if_stmt.else_stmt);
-                fprintf(ctx.output, "  br label %%L%d\n", end_label);
+                if (!ctx.in_return_block) {
+                    fprintf(ctx.output, "  br label %%L%d\n", end_label);
+                }
+                int else_returned = ctx.in_return_block;
+                ctx.in_return_block = prev_return_state || (then_returned && else_returned);
+                exit_scope();
             }
             
             fprintf(ctx.output, "L%d:\n", end_label);
@@ -294,21 +373,34 @@ static void generate_statement(ast_node_t *node) {
             
             int cond = generate_expression(node->data.while_stmt.condition);
             
-            char cond_str[32];
-            if (node->data.while_stmt.condition->type == AST_NUMBER) {
-                snprintf(cond_str, sizeof(cond_str), "%d", cond);
+            // Smart boolean conversion
+            int bool_temp;
+            if (is_comparison_op(node->data.while_stmt.condition)) {
+                bool_temp = cond;
             } else {
-                snprintf(cond_str, sizeof(cond_str), "%%t%d", cond);
+                bool_temp = get_next_temp();
+                char cond_str[32];
+                if (node->data.while_stmt.condition->type == AST_NUMBER) {
+                    snprintf(cond_str, sizeof(cond_str), "%d", cond);
+                } else {
+                    snprintf(cond_str, sizeof(cond_str), "%%t%d", cond);
+                }
+                fprintf(ctx.output, "  %%t%d = icmp ne i32 %s, 0\n", bool_temp, cond_str);
             }
             
-            int bool_temp = get_next_temp();
-            fprintf(ctx.output, "  %%t%d = icmp ne i32 %s, 0\n", bool_temp, cond_str);
             fprintf(ctx.output, "  br i1 %%t%d, label %%L%d, label %%L%d\n", 
                     bool_temp, body_label, end_label);
             
             fprintf(ctx.output, "L%d:\n", body_label);
+            enter_scope();
+            int prev_return_state = ctx.in_return_block;
+            ctx.in_return_block = 0;
             generate_statement(node->data.while_stmt.body);
-            fprintf(ctx.output, "  br label %%L%d\n", cond_label);
+            if (!ctx.in_return_block) {
+                fprintf(ctx.output, "  br label %%L%d\n", cond_label);
+            }
+            ctx.in_return_block = prev_return_state;
+            exit_scope();
             
             fprintf(ctx.output, "L%d:\n", end_label);
             break;
@@ -326,6 +418,7 @@ static void generate_statement(ast_node_t *node) {
             } else {
                 fprintf(ctx.output, "  ret void\n");
             }
+            ctx.in_return_block = 1;
             break;
         }
         
@@ -346,13 +439,16 @@ static void generate_statement(ast_node_t *node) {
 }
 
 static void generate_compound_statement(ast_node_t *node) {
-    for (int i = 0; i < node->data.compound.stmt_count; i++) {
+    enter_scope();
+    for (int i = 0; i < node->data.compound.stmt_count && !ctx.in_return_block; i++) {
         generate_statement(node->data.compound.statements[i]);
     }
+    exit_scope();
 }
 
 static void generate_function(ast_node_t *node) {
     ctx.current_function = node->data.function.name;
+    ctx.in_return_block = 0;
     
     // Function declaration
     fprintf(ctx.output, "define %s @%s(", 
@@ -367,8 +463,8 @@ static void generate_function(ast_node_t *node) {
                 get_llvm_type(param->data.parameter.type),
                 param->data.parameter.name);
         
-        // Add parameter to symbol table
-        add_symbol(param->data.parameter.name, param->data.parameter.type, 0);
+        // Add parameter to symbol table - mark as parameter!
+        add_symbol(param->data.parameter.name, param->data.parameter.type, 0, 1);
     }
     
     fprintf(ctx.output, ") {\n");
@@ -389,9 +485,14 @@ static void generate_function(ast_node_t *node) {
     // Function body
     generate_compound_statement(node->data.function.body);
     
-    // Add default return if needed
-    if (strcmp(node->data.function.return_type, "void") == 0) {
-        fprintf(ctx.output, "  ret void\n");
+    // Add default return if needed and we haven't already returned
+    if (!ctx.in_return_block) {
+        if (strcmp(node->data.function.return_type, "void") == 0) {
+            fprintf(ctx.output, "  ret void\n");
+        } else {
+            // For non-void functions, we should add a default return 0
+            fprintf(ctx.output, "  ret i32 0\n");
+        }
     }
     
     fprintf(ctx.output, "}\n\n");
@@ -402,8 +503,10 @@ void generate_llvm_ir(ast_node_t *ast, FILE *output) {
     ctx.output = output;
     ctx.label_counter = 0;
     ctx.temp_counter = 0;
+    ctx.scope_counter = 0;
     ctx.symbols = NULL;
     ctx.current_function = NULL;
+    ctx.in_return_block = 0;
     
     // Generate LLVM IR header
     fprintf(output, "; Mini C Compiler - Generated LLVM IR\n\n");
@@ -411,7 +514,7 @@ void generate_llvm_ir(ast_node_t *ast, FILE *output) {
     // Generate functions
     for (int i = 0; i < ast->data.program.func_count; i++) {
         generate_function(ast->data.program.functions[i]);
-        // Clear symbols for next function (simple approach)
+
         while (ctx.symbols) {
             symbol_t *temp = ctx.symbols;
             ctx.symbols = ctx.symbols->next;
