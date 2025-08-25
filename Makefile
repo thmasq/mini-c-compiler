@@ -1,98 +1,188 @@
+# Mini C Compiler Makefile
+
+# Directories
+SRCDIR = src
+BUILDDIR = build
+TESTDIR = tests
+EXAMPLEDIR = examples
+
+# Compiler settings
 CC = gcc
-CFLAGS = -Wall -g -std=c99 -D_POSIX_C_SOURCE=200809L
+CFLAGS = -Wall -g -std=c99 -D_POSIX_C_SOURCE=200809L -I$(SRCDIR)
 FLEX = flex
 BISON = bison
 
+# Target and source files
 TARGET = minicc
 SOURCES = main.c ast.c codegen.c lexer.c parser.c
-OBJECTS = $(SOURCES:.c=.o)
+OBJECTS = $(SOURCES:%.c=$(BUILDDIR)/%.o)
 
-# Generated files
-LEXER_C = lexer.c
-PARSER_C = parser.c
-PARSER_H = parser.h
+# Generated files (in src directory)
+LEXER_C = $(SRCDIR)/lexer.c
+PARSER_C = $(SRCDIR)/parser.c
+PARSER_H = $(SRCDIR)/parser.h
 
-.PHONY: all clean test
+.PHONY: all clean test test-advanced dirs help install-tests
 
-all: $(TARGET)
+all: dirs $(TARGET)
+
+# Create necessary directories
+dirs:
+	@mkdir -p $(BUILDDIR)
 
 $(TARGET): $(OBJECTS)
 	$(CC) $(CFLAGS) -o $@ $^
 
 # Generate lexer from flex file
-$(LEXER_C): lexer.l $(PARSER_H)
+$(LEXER_C): $(SRCDIR)/lexer.l $(PARSER_H)
 	$(FLEX) -o $@ $<
 
 # Generate parser from bison file
-$(PARSER_C) $(PARSER_H): parser.y
+$(PARSER_C) $(PARSER_H): $(SRCDIR)/parser.y
 	$(BISON) -d -o $(PARSER_C) $<
 
-# Dependencies
-main.o: main.c ast.h
-ast.o: ast.c ast.h
-codegen.o: codegen.c ast.h
+# Object file compilation rules
+$(BUILDDIR)/main.o: $(SRCDIR)/main.c $(SRCDIR)/ast.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILDDIR)/ast.o: $(SRCDIR)/ast.c $(SRCDIR)/ast.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILDDIR)/codegen.o: $(SRCDIR)/codegen.c $(SRCDIR)/ast.h
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Special compilation for generated files (suppress common flex/bison warnings)
-lexer.o: $(LEXER_C) ast.h $(PARSER_H)
+$(BUILDDIR)/lexer.o: $(LEXER_C) $(SRCDIR)/ast.h $(PARSER_H)
 	$(CC) $(CFLAGS) -Wno-unused-function -Wno-sign-compare -c -o $@ $<
 
-parser.o: $(PARSER_C) ast.h
+$(BUILDDIR)/parser.o: $(PARSER_C) $(SRCDIR)/ast.h
 	$(CC) $(CFLAGS) -Wno-unused-function -c -o $@ $<
 
-# Example test
+# Install basic test files (run once to set up)
+install-tests:
+	@echo "Setting up basic test files..."
+	@mkdir -p $(TESTDIR)/basic $(TESTDIR)/advanced
+	@echo "int main() {" > $(TESTDIR)/basic/arithmetic.c
+	@echo "    int x = 10;" >> $(TESTDIR)/basic/arithmetic.c
+	@echo "    int y = 20;" >> $(TESTDIR)/basic/arithmetic.c
+	@echo "    int result = x + y * 2;" >> $(TESTDIR)/basic/arithmetic.c
+	@echo "    return result;" >> $(TESTDIR)/basic/arithmetic.c
+	@echo "}" >> $(TESTDIR)/basic/arithmetic.c
+	@echo "Created $(TESTDIR)/basic/arithmetic.c"
+	@echo ""
+	@echo "int fibonacci(int n) {" > $(TESTDIR)/advanced/fibonacci.c
+	@echo "    if (n <= 1) {" >> $(TESTDIR)/advanced/fibonacci.c
+	@echo "        return n;" >> $(TESTDIR)/advanced/fibonacci.c
+	@echo "    }" >> $(TESTDIR)/advanced/fibonacci.c
+	@echo "    return fibonacci(n - 1) + fibonacci(n - 2);" >> $(TESTDIR)/advanced/fibonacci.c
+	@echo "}" >> $(TESTDIR)/advanced/fibonacci.c
+	@echo "" >> $(TESTDIR)/advanced/fibonacci.c
+	@echo "int main() {" >> $(TESTDIR)/advanced/fibonacci.c
+	@echo "    int i = 0;" >> $(TESTDIR)/advanced/fibonacci.c
+	@echo "    while (i < 10) {" >> $(TESTDIR)/advanced/fibonacci.c
+	@echo "        int fib = fibonacci(i);" >> $(TESTDIR)/advanced/fibonacci.c
+	@echo "        i = i + 1;" >> $(TESTDIR)/advanced/fibonacci.c
+	@echo "    }" >> $(TESTDIR)/advanced/fibonacci.c
+	@echo "    return 0;" >> $(TESTDIR)/advanced/fibonacci.c
+	@echo "}" >> $(TESTDIR)/advanced/fibonacci.c
+	@echo "Created $(TESTDIR)/advanced/fibonacci.c"
+
+# Simple test using basic arithmetic
 test: $(TARGET)
-	@echo "Creating test program..."
-	@echo "int main() {" > test.c
-	@echo "    int x = 10;" >> test.c
-	@echo "    int y = 20;" >> test.c
-	@echo "    int result = x + y * 2;" >> test.c
-	@echo "    return result;" >> test.c
-	@echo "}" >> test.c
-	@echo ""
-	@echo "Compiling test program..."
-	./$(TARGET) test.c -o test.ll
+	@echo "=== Running Basic Test ==="
+	@if [ ! -f $(TESTDIR)/basic/arithmetic.c ]; then \
+		echo "Test files not found. Run 'make install-tests' first."; \
+		exit 1; \
+	fi
+	@echo "Compiling $(TESTDIR)/basic/arithmetic.c..."
+	./$(TARGET) $(TESTDIR)/basic/arithmetic.c -o $(BUILDDIR)/test_arithmetic.ll
 	@echo ""
 	@echo "Generated LLVM IR:"
-	@cat test.ll
+	@cat $(BUILDDIR)/test_arithmetic.ll
 
-clean:
-	rm -f $(OBJECTS) $(TARGET) $(LEXER_C) $(PARSER_C) $(PARSER_H)
-	rm -f test.c test.ll
-
-# Advanced test with more features
+# Advanced test with functions and control flow
 test-advanced: $(TARGET)
-	@echo "Creating advanced test program..."
-	@echo "int fibonacci(int n) {" > advanced_test.c
-	@echo "    if (n <= 1) {" >> advanced_test.c
-	@echo "        return n;" >> advanced_test.c
-	@echo "    }" >> advanced_test.c
-	@echo "    return fibonacci(n - 1) + fibonacci(n - 2);" >> advanced_test.c
-	@echo "}" >> advanced_test.c
-	@echo "" >> advanced_test.c
-	@echo "int main() {" >> advanced_test.c
-	@echo "    int i = 0;" >> advanced_test.c
-	@echo "    while (i < 10) {" >> advanced_test.c
-	@echo "        int fib = fibonacci(i);" >> advanced_test.c
-	@echo "        i = i + 1;" >> advanced_test.c
-	@echo "    }" >> advanced_test.c
-	@echo "    return 0;" >> advanced_test.c
-	@echo "}" >> advanced_test.c
+	@echo "=== Running Advanced Test ==="
+	@if [ ! -f $(TESTDIR)/advanced/fibonacci.c ]; then \
+		echo "Test files not found. Run 'make install-tests' first."; \
+		exit 1; \
+	fi
+	@echo "Compiling $(TESTDIR)/advanced/fibonacci.c..."
+	./$(TARGET) $(TESTDIR)/advanced/fibonacci.c -o $(BUILDDIR)/test_fibonacci.ll
 	@echo ""
-	@echo "Compiling advanced test program..."
-	./$(TARGET) advanced_test.c -o advanced_test.ll
-	@echo ""
-	@echo "Generated LLVM IR:"
-	@head -50 advanced_test.ll
+	@echo "Generated LLVM IR (first 50 lines):"
+	@head -50 $(BUILDDIR)/test_fibonacci.ll
 
+# Test with example file
+test-example: $(TARGET)
+	@echo "=== Running Example Test ==="
+	@if [ ! -f $(EXAMPLEDIR)/sample.c ]; then \
+		echo "Example file not found at $(EXAMPLEDIR)/sample.c"; \
+		exit 1; \
+	fi
+	@echo "Compiling $(EXAMPLEDIR)/sample.c..."
+	./$(TARGET) $(EXAMPLEDIR)/sample.c -o $(BUILDDIR)/test_example.ll
+	@echo ""
+	@echo "Generated LLVM IR (first 50 lines):"
+	@head -50 $(BUILDDIR)/test_example.ll
+
+# Run all tests
+test-all: test test-advanced test-example
+	@echo ""
+	@echo "=== All Tests Complete ==="
+
+# Clean up generated files
+clean:
+	rm -f $(OBJECTS) $(TARGET)
+	rm -f $(LEXER_C) $(PARSER_C) $(PARSER_H)
+	rm -rf $(BUILDDIR)
+	rm -f $(TESTDIR)/**/*.ll
+	@echo "Cleaned build artifacts and generated files"
+
+# Clean only build directory (keep generated parser/lexer)
+clean-build:
+	rm -rf $(BUILDDIR)
+	@echo "Cleaned build directory"
+
+# Development helpers
+rebuild: clean all
+
+debug: CFLAGS += -DDEBUG -O0
+debug: all
+
+release: CFLAGS += -O2 -DNDEBUG
+release: clean all
+
+# Show help
 help:
 	@echo "Mini C Compiler Build System"
 	@echo ""
-	@echo "Targets:"
-	@echo "  all           - Build the compiler"
-	@echo "  test          - Build and run a simple test"
-	@echo "  test-advanced - Build and run an advanced test"
-	@echo "  clean         - Remove generated files"
-	@echo "  help          - Show this help message"
+	@echo "Setup:"
+	@echo "  install-tests     - Set up basic test files (run once)"
+	@echo ""
+	@echo "Build targets:"
+	@echo "  all               - Build the compiler (default)"
+	@echo "  debug             - Build with debug flags"
+	@echo "  release           - Build optimized version"
+	@echo "  rebuild           - Clean and build"
+	@echo ""
+	@echo "Test targets:"
+	@echo "  test              - Run basic arithmetic test"
+	@echo "  test-advanced     - Run advanced fibonacci test"
+	@echo "  test-example      - Run example program test"
+	@echo "  test-all          - Run all tests"
+	@echo ""
+	@echo "Cleanup:"
+	@echo "  clean             - Remove all generated files"
+	@echo "  clean-build       - Remove only build artifacts"
 	@echo ""
 	@echo "Usage:"
 	@echo "  ./$(TARGET) input.c -o output.ll"
+	@echo ""
+	@echo "Directory structure:"
+	@echo "  $(SRCDIR)/           - Source code"
+	@echo "  $(BUILDDIR)/         - Build artifacts"
+	@echo "  $(TESTDIR)/          - Test programs"
+	@echo "  $(EXAMPLEDIR)/       - Example programs"
+
+.DEFAULT_GOAL := all
