@@ -43,7 +43,7 @@ static char *string_duplicate(const char *str) {
 %token <string> IDENTIFIER
 %token INT CHAR VOID
 %token IF ELSE WHILE RETURN
-%token PLUS MINUS MULTIPLY DIVIDE
+%token PLUS MINUS MULTIPLY DIVIDE MODULO
 %token ASSIGN EQ NE LT LE GT GE NOT
 %token LPAREN RPAREN LBRACE RBRACE SEMICOLON COMMA
 
@@ -56,7 +56,7 @@ static char *string_duplicate(const char *str) {
 
 %left EQ NE LT LE GT GE
 %left PLUS MINUS
-%left MULTIPLY DIVIDE
+%left MULTIPLY DIVIDE MODULO
 %right NOT UMINUS
 %nonassoc LOWER_THAN_ELSE
 %nonassoc ELSE
@@ -207,6 +207,9 @@ expression:
     }
     | expression DIVIDE expression {
         $$ = create_binary_op(OP_DIV, $1, $3);
+    }
+    | expression MODULO expression {
+        $$ = create_binary_op(OP_MOD, $1, $3);
     }
     | expression EQ expression {
         $$ = create_binary_op(OP_EQ, $1, $3);

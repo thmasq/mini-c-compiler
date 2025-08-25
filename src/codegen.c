@@ -111,6 +111,7 @@ static int generate_expression(ast_node_t *node) {
                 case OP_SUB: op_str = "sub"; break;
                 case OP_MUL: op_str = "mul"; break;
                 case OP_DIV: op_str = "sdiv"; break;
+                case OP_MOD: op_str = "srem"; break;
                 case OP_EQ: op_str = "icmp eq"; break;
                 case OP_NE: op_str = "icmp ne"; break;
                 case OP_LT: op_str = "icmp slt"; break;

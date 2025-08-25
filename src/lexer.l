@@ -49,6 +49,7 @@ static char *string_duplicate(const char *str) {
 "-"             { return MINUS; }
 "*"             { return MULTIPLY; }
 "/"             { return DIVIDE; }
+"%"             { return MODULO; }
 "="             { return ASSIGN; }
 "=="            { return EQ; }
 "!="            { return NE; }

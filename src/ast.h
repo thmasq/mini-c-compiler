@@ -26,7 +26,7 @@ typedef enum {
 
 // Binary operators
 typedef enum {
-    OP_ADD, OP_SUB, OP_MUL, OP_DIV,
+    OP_ADD, OP_SUB, OP_MUL, OP_DIV,OP_MOD,
     OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE
 } binary_op_t;
 
