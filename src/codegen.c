@@ -20,6 +20,7 @@ static char *string_duplicate(const char *str) {
 // Symbol table entry
 typedef struct symbol {
     char *name;
+    char *llvm_name;
     char *type;
     int is_global;
     int is_parameter;
@@ -33,6 +34,7 @@ typedef struct {
     int label_counter;
     int temp_counter;
     int scope_counter;
+    int var_counter;
     symbol_t *symbols;
     char *current_function;
     int in_return_block;
@@ -47,6 +49,27 @@ static int is_comparison_op(ast_node_t *node) {
         return (op >= OP_EQ && op <= OP_GE);  // All comparison operators
     }
     return 0;
+}
+
+// Generate a unique LLVM variable name
+static char *generate_unique_llvm_name(const char *base_name, int is_parameter) {
+    char *llvm_name = malloc(256);
+    if (!llvm_name) {
+        fprintf(stderr, "Memory allocation failed\n");
+        exit(1);
+    }
+    
+    const char *func_name = ctx.current_function ? ctx.current_function : "global";
+    
+    if (is_parameter) {
+        // Parameters include function name for clarity
+        snprintf(llvm_name, 256, "%s.%s", func_name, base_name);
+    } else {
+        // Local variables get function.name.scope.counter format
+        snprintf(llvm_name, 256, "%s.%s.%d.%d", func_name, base_name, ctx.scope_counter, ++ctx.var_counter);
+    }
+    
+    return llvm_name;
 }
 
 // Scope management functions
@@ -64,6 +87,7 @@ static void exit_scope() {
             symbol_t *to_remove = *current;
             *current = (*current)->next;
             free(to_remove->name);
+            free(to_remove->llvm_name);
             free(to_remove->type);
             free(to_remove);
         } else {
@@ -76,6 +100,7 @@ static void exit_scope() {
 static void add_symbol(const char *name, const char *type, int is_global, int is_parameter) {
     symbol_t *sym = malloc(sizeof(symbol_t));
     sym->name = string_duplicate(name);
+    sym->llvm_name = generate_unique_llvm_name(name, is_parameter);
     sym->type = string_duplicate(type);
     sym->is_global = is_global;
     sym->is_parameter = is_parameter;
@@ -132,15 +157,15 @@ static int generate_expression(ast_node_t *node) {
             
             int temp = get_next_temp();
             
-            // FIX: Use .addr suffix for parameters
+            // Use the unique LLVM name with appropriate suffix
             if (sym->is_parameter) {
                 fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s.addr\n", 
                         temp, get_llvm_type(sym->type), get_llvm_type(sym->type), 
-                        node->data.identifier.name);
+                        sym->llvm_name);
             } else {
                 fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s\n", 
                         temp, get_llvm_type(sym->type), get_llvm_type(sym->type), 
-                        node->data.identifier.name);
+                        sym->llvm_name);
             }
             return temp;
         }
@@ -250,10 +275,15 @@ static void generate_statement(ast_node_t *node) {
         case AST_DECLARATION: {
             add_symbol(node->data.declaration.name, node->data.declaration.type, 0, 0);
             
-            const char *var_name = node->data.declaration.name;
+            // Find the symbol we just added to get its unique LLVM name
+            symbol_t *sym = find_symbol(node->data.declaration.name);
+            if (!sym) {
+                fprintf(stderr, "Internal error: symbol not found after adding\n");
+                return;
+            }
             
             fprintf(ctx.output, "  %%%s = alloca %s\n", 
-                    var_name, get_llvm_type(node->data.declaration.type));
+                    sym->llvm_name, get_llvm_type(node->data.declaration.type));
             
             if (node->data.declaration.init) {
                 int init_value = generate_expression(node->data.declaration.init);
@@ -262,12 +292,12 @@ static void generate_statement(ast_node_t *node) {
                     fprintf(ctx.output, "  store %s %d, %s* %%%s\n", 
                             get_llvm_type(node->data.declaration.type), init_value,
                             get_llvm_type(node->data.declaration.type), 
-                            var_name);
+                            sym->llvm_name);
                 } else {
                     fprintf(ctx.output, "  store %s %%t%d, %s* %%%s\n", 
                             get_llvm_type(node->data.declaration.type), init_value,
                             get_llvm_type(node->data.declaration.type), 
-                            var_name);
+                            sym->llvm_name);
                 }
             }
             break;
@@ -277,25 +307,28 @@ static void generate_statement(ast_node_t *node) {
             int value = generate_expression(node->data.assignment.value);
             
             symbol_t *sym = find_symbol(node->data.assignment.name);
-            const char *target_name = node->data.assignment.name;
+            if (!sym) {
+                fprintf(stderr, "Undefined variable in assignment: %s\n", node->data.assignment.name);
+                return;
+            }
             
-            if (sym && sym->is_parameter) {
+            if (sym->is_parameter) {
                 // For parameters, store to .addr
                 if (node->data.assignment.value->type == AST_NUMBER) {
                     fprintf(ctx.output, "  store i32 %d, i32* %%%s.addr\n", 
-                            value, target_name);
+                            value, sym->llvm_name);
                 } else {
                     fprintf(ctx.output, "  store i32 %%t%d, i32* %%%s.addr\n", 
-                            value, target_name);
+                            value, sym->llvm_name);
                 }
             } else {
-                // For local variables, store normally
+                // For local variables, store to unique name
                 if (node->data.assignment.value->type == AST_NUMBER) {
                     fprintf(ctx.output, "  store i32 %d, i32* %%%s\n", 
-                            value, target_name);
+                            value, sym->llvm_name);
                 } else {
                     fprintf(ctx.output, "  store i32 %%t%d, i32* %%%s\n", 
-                            value, target_name);
+                            value, sym->llvm_name);
                 }
             }
             break;
@@ -472,14 +505,15 @@ static void generate_function(ast_node_t *node) {
     // Allocate space for parameters
     for (int i = 0; i < node->data.function.param_count; i++) {
         ast_node_t *param = node->data.function.params[i];
+        symbol_t *sym = find_symbol(param->data.parameter.name);
         fprintf(ctx.output, "  %%%s.addr = alloca %s\n", 
-                param->data.parameter.name, 
+                sym->llvm_name, 
                 get_llvm_type(param->data.parameter.type));
         fprintf(ctx.output, "  store %s %%%s, %s* %%%s.addr\n", 
                 get_llvm_type(param->data.parameter.type), 
-                param->data.parameter.name,
+                sym->llvm_name,
                 get_llvm_type(param->data.parameter.type), 
-                param->data.parameter.name);
+                sym->llvm_name);
     }
     
     // Function body
@@ -504,6 +538,7 @@ void generate_llvm_ir(ast_node_t *ast, FILE *output) {
     ctx.label_counter = 0;
     ctx.temp_counter = 0;
     ctx.scope_counter = 0;
+    ctx.var_counter = 0;
     ctx.symbols = NULL;
     ctx.current_function = NULL;
     ctx.in_return_block = 0;
@@ -519,6 +554,7 @@ void generate_llvm_ir(ast_node_t *ast, FILE *output) {
             symbol_t *temp = ctx.symbols;
             ctx.symbols = ctx.symbols->next;
             free(temp->name);
+            free(temp->llvm_name);
             free(temp->type);
             free(temp);
         }
