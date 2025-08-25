@@ -511,7 +511,7 @@ static void generate_function(ast_node_t *node) {
                 get_llvm_type(param->data.parameter.type));
         fprintf(ctx.output, "  store %s %%%s, %s* %%%s.addr\n", 
                 get_llvm_type(param->data.parameter.type), 
-                sym->llvm_name,
+                param->data.parameter.name,
                 get_llvm_type(param->data.parameter.type), 
                 sym->llvm_name);
     }
