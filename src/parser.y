@@ -60,7 +60,8 @@ static type_info_t make_type_info(type_info_t base_type, declarator_t decl) {
 %token INT CHAR VOID
 %token IF ELSE WHILE RETURN
 %token PLUS MINUS MULTIPLY DIVIDE MODULO
-%token ASSIGN EQ NE LT LE GT GE NOT AMPERSAND
+%token ASSIGN EQ NE LT LE GT GE 
+%token NOT LAND LOR AMPERSAND PIPE CARET TILDE LSHIFT RSHIFT
 %token LPAREN RPAREN LBRACE RBRACE LBRACKET RBRACKET SEMICOLON COMMA
 
 %type <node> program function declaration statement compound_statement
@@ -72,10 +73,19 @@ static type_info_t make_type_info(type_info_t base_type, declarator_t decl) {
 %type <number> pointer
 %type <node_array> function_list statement_list parameter_list argument_list
 
-%left EQ NE LT LE GT GE
+// Operator precedence and associativity (lowest to highest precedence)
+%right ASSIGN
+%left LOR
+%left LAND
+%left PIPE
+%left CARET
+%left AMPERSAND
+%left EQ NE
+%left LT LE GT GE
+%left LSHIFT RSHIFT
 %left PLUS MINUS
 %left MULTIPLY DIVIDE MODULO
-%right NOT UMINUS USTAR UAMPERSAND
+%right NOT UMINUS USTAR UAMPERSAND UTILDE
 %left LBRACKET
 %nonassoc LOWER_THAN_ELSE
 %nonassoc ELSE
@@ -287,6 +297,7 @@ expression_statement:
 
 expression:
     primary_expression
+    // Arithmetic operators
     | expression PLUS expression {
         $$ = create_binary_op(OP_ADD, $1, $3);
     }
@@ -302,6 +313,7 @@ expression:
     | expression MODULO expression {
         $$ = create_binary_op(OP_MOD, $1, $3);
     }
+    // Comparison operators
     | expression EQ expression {
         $$ = create_binary_op(OP_EQ, $1, $3);
     }
@@ -320,11 +332,39 @@ expression:
     | expression GE expression {
         $$ = create_binary_op(OP_GE, $1, $3);
     }
+    // Shift operators
+    | expression LSHIFT expression {
+        $$ = create_binary_op(OP_LSHIFT, $1, $3);
+    }
+    | expression RSHIFT expression {
+        $$ = create_binary_op(OP_RSHIFT, $1, $3);
+    }
+    // Bitwise operators
+    | expression AMPERSAND expression {
+        $$ = create_binary_op(OP_BAND, $1, $3);
+    }
+    | expression PIPE expression {
+        $$ = create_binary_op(OP_BOR, $1, $3);
+    }
+    | expression CARET expression {
+        $$ = create_binary_op(OP_BXOR, $1, $3);
+    }
+    // Logical operators
+    | expression LAND expression {
+        $$ = create_binary_op(OP_LAND, $1, $3);
+    }
+    | expression LOR expression {
+        $$ = create_binary_op(OP_LOR, $1, $3);
+    }
+    // Unary operators
     | MINUS expression %prec UMINUS {
         $$ = create_unary_op(OP_NEG, $2);
     }
     | NOT expression {
         $$ = create_unary_op(OP_NOT, $2);
+    }
+    | TILDE expression %prec UTILDE {
+        $$ = create_unary_op(OP_BNOT, $2);
     }
     | AMPERSAND primary_expression %prec UAMPERSAND {
         $$ = create_address_of($2);

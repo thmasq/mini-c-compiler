@@ -30,13 +30,19 @@ typedef enum {
 
 // Binary operators
 typedef enum {
+    // Arithmetic operators
     OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD,
-    OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE
+    // Comparison operators
+    OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE,
+    // Logical operators
+    OP_LAND, OP_LOR,
+    // Bitwise operators
+    OP_BAND, OP_BOR, OP_BXOR, OP_LSHIFT, OP_RSHIFT
 } binary_op_t;
 
 // Unary operators
 typedef enum {
-    OP_NEG, OP_NOT
+    OP_NEG, OP_NOT, OP_BNOT
 } unary_op_t;
 
 // Forward declaration

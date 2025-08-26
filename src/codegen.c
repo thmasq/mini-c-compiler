@@ -42,11 +42,11 @@ typedef struct {
 
 static codegen_context_t ctx;
 
-// Helper function to check if an AST node is a comparison operation
-static int is_comparison_op(ast_node_t *node) {
+// Helper function to check if an AST node is a comparison or logical operation
+static int is_comparison_or_logical_op(ast_node_t *node) {
     if (node && node->type == AST_BINARY_OP) {
         binary_op_t op = node->data.binary_op.op;
-        return (op >= OP_EQ && op <= OP_GE);  // All comparison operators
+        return (op >= OP_EQ && op <= OP_GE) || (op == OP_LAND) || (op == OP_LOR);
     }
     return 0;
 }
@@ -320,43 +320,190 @@ static int generate_expression(ast_node_t *node) {
         }
         
         case AST_BINARY_OP: {
-            int left = generate_expression(node->data.binary_op.left);
-            int right = generate_expression(node->data.binary_op.right);
-            int temp = get_next_temp();
-            
-            const char *op_str = "";
-            switch (node->data.binary_op.op) {
-                case OP_ADD: op_str = "add"; break;
-                case OP_SUB: op_str = "sub"; break;
-                case OP_MUL: op_str = "mul"; break;
-                case OP_DIV: op_str = "sdiv"; break;
-                case OP_MOD: op_str = "srem"; break;
-                case OP_EQ: op_str = "icmp eq"; break;
-                case OP_NE: op_str = "icmp ne"; break;
-                case OP_LT: op_str = "icmp slt"; break;
-                case OP_LE: op_str = "icmp sle"; break;
-                case OP_GT: op_str = "icmp sgt"; break;
-                case OP_GE: op_str = "icmp sge"; break;
-            }
-            
-            // Handle constants vs temporaries
-            char left_operand[32], right_operand[32];
-            if (node->data.binary_op.left->type == AST_NUMBER) {
-                snprintf(left_operand, sizeof(left_operand), "%d", left);
+            // Handle logical operators with short-circuit evaluation
+            if (node->data.binary_op.op == OP_LAND) {
+                // Logical AND: left && right
+                int left_label = get_next_label();
+                int right_label = get_next_label();
+                int end_label = get_next_label();
+                int result_temp = get_next_temp();
+                
+                // Allocate result variable
+                fprintf(ctx.output, "  %%t%d.addr = alloca i1\n", result_temp);
+                
+                // Evaluate left operand
+                int left = generate_expression(node->data.binary_op.left);
+                
+                // Convert to boolean if needed
+                int left_bool;
+                if (is_comparison_or_logical_op(node->data.binary_op.left)) {
+                    left_bool = left;
+                } else {
+                    left_bool = get_next_temp();
+                    char left_str[32];
+                    if (node->data.binary_op.left->type == AST_NUMBER) {
+                        snprintf(left_str, sizeof(left_str), "%d", left);
+                    } else {
+                        snprintf(left_str, sizeof(left_str), "%%t%d", left);
+                    }
+                    fprintf(ctx.output, "  %%t%d = icmp ne i32 %s, 0\n", left_bool, left_str);
+                }
+                
+                // Short circuit: if left is false, result is false
+                fprintf(ctx.output, "  br i1 %%t%d, label %%L%d, label %%L%d\n", 
+                        left_bool, right_label, left_label);
+                
+                // Left is false - store false and jump to end
+                fprintf(ctx.output, "L%d:\n", left_label);
+                fprintf(ctx.output, "  store i1 false, i1* %%t%d.addr\n", result_temp);
+                fprintf(ctx.output, "  br label %%L%d\n", end_label);
+                
+                // Left is true - evaluate right
+                fprintf(ctx.output, "L%d:\n", right_label);
+                int right = generate_expression(node->data.binary_op.right);
+                
+                // Convert to boolean if needed
+                int right_bool;
+                if (is_comparison_or_logical_op(node->data.binary_op.right)) {
+                    right_bool = right;
+                } else {
+                    right_bool = get_next_temp();
+                    char right_str[32];
+                    if (node->data.binary_op.right->type == AST_NUMBER) {
+                        snprintf(right_str, sizeof(right_str), "%d", right);
+                    } else {
+                        snprintf(right_str, sizeof(right_str), "%%t%d", right);
+                    }
+                    fprintf(ctx.output, "  %%t%d = icmp ne i32 %s, 0\n", right_bool, right_str);
+                }
+                
+                fprintf(ctx.output, "  store i1 %%t%d, i1* %%t%d.addr\n", right_bool, result_temp);
+                fprintf(ctx.output, "  br label %%L%d\n", end_label);
+                
+                // End - load result and convert to i32
+                fprintf(ctx.output, "L%d:\n", end_label);
+                int final_temp = get_next_temp();
+                fprintf(ctx.output, "  %%t%d = load i1, i1* %%t%d.addr\n", final_temp, result_temp);
+                int result = get_next_temp();
+                fprintf(ctx.output, "  %%t%d = zext i1 %%t%d to i32\n", result, final_temp);
+                
+                return result;
+                
+            } else if (node->data.binary_op.op == OP_LOR) {
+                // Logical OR: left || right
+                int left_label = get_next_label();
+                int right_label = get_next_label();
+                int end_label = get_next_label();
+                int result_temp = get_next_temp();
+                
+                // Allocate result variable
+                fprintf(ctx.output, "  %%t%d.addr = alloca i1\n", result_temp);
+                
+                // Evaluate left operand
+                int left = generate_expression(node->data.binary_op.left);
+                
+                // Convert to boolean if needed
+                int left_bool;
+                if (is_comparison_or_logical_op(node->data.binary_op.left)) {
+                    left_bool = left;
+                } else {
+                    left_bool = get_next_temp();
+                    char left_str[32];
+                    if (node->data.binary_op.left->type == AST_NUMBER) {
+                        snprintf(left_str, sizeof(left_str), "%d", left);
+                    } else {
+                        snprintf(left_str, sizeof(left_str), "%%t%d", left);
+                    }
+                    fprintf(ctx.output, "  %%t%d = icmp ne i32 %s, 0\n", left_bool, left_str);
+                }
+                
+                // Short circuit: if left is true, result is true
+                fprintf(ctx.output, "  br i1 %%t%d, label %%L%d, label %%L%d\n", 
+                        left_bool, left_label, right_label);
+                
+                // Left is true - store true and jump to end
+                fprintf(ctx.output, "L%d:\n", left_label);
+                fprintf(ctx.output, "  store i1 true, i1* %%t%d.addr\n", result_temp);
+                fprintf(ctx.output, "  br label %%L%d\n", end_label);
+                
+                // Left is false - evaluate right
+                fprintf(ctx.output, "L%d:\n", right_label);
+                int right = generate_expression(node->data.binary_op.right);
+                
+                // Convert to boolean if needed
+                int right_bool;
+                if (is_comparison_or_logical_op(node->data.binary_op.right)) {
+                    right_bool = right;
+                } else {
+                    right_bool = get_next_temp();
+                    char right_str[32];
+                    if (node->data.binary_op.right->type == AST_NUMBER) {
+                        snprintf(right_str, sizeof(right_str), "%d", right);
+                    } else {
+                        snprintf(right_str, sizeof(right_str), "%%t%d", right);
+                    }
+                    fprintf(ctx.output, "  %%t%d = icmp ne i32 %s, 0\n", right_bool, right_str);
+                }
+                
+                fprintf(ctx.output, "  store i1 %%t%d, i1* %%t%d.addr\n", right_bool, result_temp);
+                fprintf(ctx.output, "  br label %%L%d\n", end_label);
+                
+                // End - load result and convert to i32
+                fprintf(ctx.output, "L%d:\n", end_label);
+                int final_temp = get_next_temp();
+                fprintf(ctx.output, "  %%t%d = load i1, i1* %%t%d.addr\n", final_temp, result_temp);
+                int result = get_next_temp();
+                fprintf(ctx.output, "  %%t%d = zext i1 %%t%d to i32\n", result, final_temp);
+                
+                return result;
             } else {
-                snprintf(left_operand, sizeof(left_operand), "%%t%d", left);
+                // Regular binary operations (non-short-circuit)
+                int left = generate_expression(node->data.binary_op.left);
+                int right = generate_expression(node->data.binary_op.right);
+                int temp = get_next_temp();
+                
+                const char *op_str = "";
+                switch (node->data.binary_op.op) {
+                    case OP_ADD: op_str = "add"; break;
+                    case OP_SUB: op_str = "sub"; break;
+                    case OP_MUL: op_str = "mul"; break;
+                    case OP_DIV: op_str = "sdiv"; break;
+                    case OP_MOD: op_str = "srem"; break;
+                    case OP_EQ: op_str = "icmp eq"; break;
+                    case OP_NE: op_str = "icmp ne"; break;
+                    case OP_LT: op_str = "icmp slt"; break;
+                    case OP_LE: op_str = "icmp sle"; break;
+                    case OP_GT: op_str = "icmp sgt"; break;
+                    case OP_GE: op_str = "icmp sge"; break;
+                    case OP_BAND: op_str = "and"; break;
+                    case OP_BOR: op_str = "or"; break;
+                    case OP_BXOR: op_str = "xor"; break;
+                    case OP_LSHIFT: op_str = "shl"; break;
+                    case OP_RSHIFT: op_str = "ashr"; break;
+                    default:
+                        fprintf(stderr, "Unknown binary operator\n");
+                        return -1;
+                }
+                
+                // Handle constants vs temporaries
+                char left_operand[32], right_operand[32];
+                if (node->data.binary_op.left->type == AST_NUMBER) {
+                    snprintf(left_operand, sizeof(left_operand), "%d", left);
+                } else {
+                    snprintf(left_operand, sizeof(left_operand), "%%t%d", left);
+                }
+                
+                if (node->data.binary_op.right->type == AST_NUMBER) {
+                    snprintf(right_operand, sizeof(right_operand), "%d", right);
+                } else {
+                    snprintf(right_operand, sizeof(right_operand), "%%t%d", right);
+                }
+                
+                fprintf(ctx.output, "  %%t%d = %s i32 %s, %s\n", 
+                        temp, op_str, left_operand, right_operand);
+                
+                return temp;
             }
-            
-            if (node->data.binary_op.right->type == AST_NUMBER) {
-                snprintf(right_operand, sizeof(right_operand), "%d", right);
-            } else {
-                snprintf(right_operand, sizeof(right_operand), "%%t%d", right);
-            }
-            
-            fprintf(ctx.output, "  %%t%d = %s i32 %s, %s\n", 
-                    temp, op_str, left_operand, right_operand);
-            
-            return temp;
         }
         
         case AST_UNARY_OP: {
@@ -376,6 +523,9 @@ static int generate_expression(ast_node_t *node) {
                     break;
                 case OP_NOT:
                     fprintf(ctx.output, "  %%t%d = icmp eq i32 %s, 0\n", temp, operand_str);
+                    break;
+                case OP_BNOT:
+                    fprintf(ctx.output, "  %%t%d = xor i32 %s, -1\n", temp, operand_str);
                     break;
             }
             
@@ -578,7 +728,7 @@ static void generate_statement(ast_node_t *node) {
             
             // Smart boolean conversion - avoid double conversion for comparison ops
             int bool_temp;
-            if (is_comparison_op(node->data.if_stmt.condition)) {
+            if (is_comparison_or_logical_op(node->data.if_stmt.condition)) {
                 // Condition already returns i1, use directly
                 bool_temp = cond;
             } else {
@@ -644,7 +794,7 @@ static void generate_statement(ast_node_t *node) {
             
             // Smart boolean conversion
             int bool_temp;
-            if (is_comparison_op(node->data.while_stmt.condition)) {
+            if (is_comparison_or_logical_op(node->data.while_stmt.condition)) {
                 bool_temp = cond;
             } else {
                 bool_temp = get_next_temp();
