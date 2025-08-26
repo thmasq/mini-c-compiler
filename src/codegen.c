@@ -21,7 +21,7 @@ static char *string_duplicate(const char *str) {
 typedef struct symbol {
     char *name;
     char *llvm_name;
-    char *type;
+    type_info_t type_info;
     int is_global;
     int is_parameter;
     int scope_level;
@@ -88,7 +88,7 @@ static void exit_scope() {
             *current = (*current)->next;
             free(to_remove->name);
             free(to_remove->llvm_name);
-            free(to_remove->type);
+            free_type_info(&to_remove->type_info);
             free(to_remove);
         } else {
             current = &(*current)->next;
@@ -97,11 +97,18 @@ static void exit_scope() {
 }
 
 // Symbol table functions
-static void add_symbol(const char *name, const char *type, int is_global, int is_parameter) {
+static void add_symbol(const char *name, type_info_t type_info, int is_global, int is_parameter) {
     symbol_t *sym = malloc(sizeof(symbol_t));
     sym->name = string_duplicate(name);
     sym->llvm_name = generate_unique_llvm_name(name, is_parameter);
-    sym->type = string_duplicate(type);
+    
+    // Deep copy type_info
+    sym->type_info.base_type = string_duplicate(type_info.base_type);
+    sym->type_info.pointer_level = type_info.pointer_level;
+    sym->type_info.is_array = type_info.is_array;
+    sym->type_info.is_vla = type_info.is_vla;
+    sym->type_info.array_size = NULL; // Don't copy the AST node for now
+    
     sym->is_global = is_global;
     sym->is_parameter = is_parameter;
     sym->scope_level = ctx.scope_counter;
@@ -126,7 +133,36 @@ static int get_next_label() {
     return ++ctx.label_counter;
 }
 
-// Convert C type to LLVM type
+// Convert type_info to LLVM type
+static char *get_llvm_type_string(type_info_t *type_info) {
+    char *result = malloc(256);
+    if (!result) {
+        fprintf(stderr, "Memory allocation failed\n");
+        exit(1);
+    }
+    
+    // Base type
+    const char *base_llvm_type;
+    if (strcmp(type_info->base_type, "int") == 0) {
+        base_llvm_type = "i32";
+    } else if (strcmp(type_info->base_type, "char") == 0) {
+        base_llvm_type = "i8";
+    } else if (strcmp(type_info->base_type, "void") == 0) {
+        base_llvm_type = "void";
+    } else {
+        base_llvm_type = "i32"; // default
+    }
+    
+    // Build type string with pointer levels
+    strcpy(result, base_llvm_type);
+    for (int i = 0; i < type_info->pointer_level; i++) {
+        strcat(result, "*");
+    }
+    
+    return result;
+}
+
+// Get the basic LLVM type (for compatibility with old code)
 static const char *get_llvm_type(const char *c_type) {
     if (strcmp(c_type, "int") == 0) return "i32";
     if (strcmp(c_type, "char") == 0) return "i8";
@@ -156,18 +192,131 @@ static int generate_expression(ast_node_t *node) {
             }
             
             int temp = get_next_temp();
+            char *type_str = get_llvm_type_string(&sym->type_info);
             
-            // Use the unique LLVM name with appropriate suffix
-            if (sym->is_parameter) {
-                fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s.addr\n", 
-                        temp, get_llvm_type(sym->type), get_llvm_type(sym->type), 
-                        sym->llvm_name);
+            // Handle arrays - they decay to pointers
+            if (sym->type_info.is_array) {
+                // For arrays, return pointer to first element
+                if (sym->is_parameter) {
+                    fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s.addr\n", 
+                            temp, type_str, type_str, sym->llvm_name);
+                } else {
+                    fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%%s, i32 0, i32 0\n", 
+                            temp, get_llvm_type(sym->type_info.base_type), 
+                            get_llvm_type(sym->type_info.base_type), sym->llvm_name);
+                }
             } else {
-                fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s\n", 
-                        temp, get_llvm_type(sym->type), get_llvm_type(sym->type), 
-                        sym->llvm_name);
+                // Regular variables and pointers
+                if (sym->is_parameter) {
+                    fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s.addr\n", 
+                            temp, type_str, type_str, sym->llvm_name);
+                } else {
+                    fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s\n", 
+                            temp, type_str, type_str, sym->llvm_name);
+                }
             }
+            
+            free(type_str);
             return temp;
+        }
+        
+        case AST_ADDRESS_OF: {
+            ast_node_t *operand = node->data.address_of.operand;
+            
+            if (operand->type == AST_IDENTIFIER) {
+                symbol_t *sym = find_symbol(operand->data.identifier.name);
+                if (!sym) {
+                    fprintf(stderr, "Undefined variable in address-of: %s\n", operand->data.identifier.name);
+                    return -1;
+                }
+                
+                int temp = get_next_temp();
+                
+                // For arrays, return the array pointer directly
+                if (sym->type_info.is_array) {
+                    if (sym->is_parameter) {
+                        fprintf(ctx.output, "  %%t%d = load %s*, %s** %%%s.addr\n", 
+                                temp, get_llvm_type(sym->type_info.base_type),
+                                get_llvm_type(sym->type_info.base_type), sym->llvm_name);
+                    } else {
+                        fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%%s, i32 0, i32 0\n", 
+                                temp, get_llvm_type(sym->type_info.base_type), 
+                                get_llvm_type(sym->type_info.base_type), sym->llvm_name);
+                    }
+                } else {
+                    // For regular variables, return their address
+                    if (sym->is_parameter) {
+                        fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%%s.addr, i32 0\n", 
+                                temp, get_llvm_type(sym->type_info.base_type),
+                                get_llvm_type(sym->type_info.base_type), sym->llvm_name);
+                    } else {
+                        fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%%s, i32 0\n", 
+                                temp, get_llvm_type(sym->type_info.base_type),
+                                get_llvm_type(sym->type_info.base_type), sym->llvm_name);
+                    }
+                }
+                
+                return temp;
+            } else if (operand->type == AST_ARRAY_ACCESS) {
+                // &array[index] - generate pointer arithmetic
+                int array_ptr = generate_expression(operand->data.array_access.array);
+                int index = generate_expression(operand->data.array_access.index);
+                int temp = get_next_temp();
+                
+                char index_str[32];
+                if (operand->data.array_access.index->type == AST_NUMBER) {
+                    snprintf(index_str, sizeof(index_str), "%d", index);
+                } else {
+                    snprintf(index_str, sizeof(index_str), "%%t%d", index);
+                }
+                
+                fprintf(ctx.output, "  %%t%d = getelementptr i32, i32* %%t%d, i32 %s\n", 
+                        temp, array_ptr, index_str);
+                return temp;
+            }
+            
+            fprintf(stderr, "Invalid address-of operation\n");
+            return -1;
+        }
+        
+        case AST_DEREFERENCE: {
+            int ptr = generate_expression(node->data.dereference.operand);
+            int temp = get_next_temp();
+            
+            if (node->data.dereference.operand->type == AST_NUMBER) {
+                // This shouldn't happen in well-formed C, but handle it
+                fprintf(stderr, "Warning: Dereferencing constant\n");
+                fprintf(ctx.output, "  %%t%d = inttoptr i32 %d to i32*\n", temp, ptr);
+                int temp2 = get_next_temp();
+                fprintf(ctx.output, "  %%t%d = load i32, i32* %%t%d\n", temp2, temp);
+                return temp2;
+            } else {
+                fprintf(ctx.output, "  %%t%d = load i32, i32* %%t%d\n", temp, ptr);
+                return temp;
+            }
+        }
+        
+        case AST_ARRAY_ACCESS: {
+            // array[index] is equivalent to *(array + index)
+            int array_ptr = generate_expression(node->data.array_access.array);
+            int index = generate_expression(node->data.array_access.index);
+            int temp = get_next_temp();
+            
+            char index_str[32];
+            if (node->data.array_access.index->type == AST_NUMBER) {
+                snprintf(index_str, sizeof(index_str), "%d", index);
+            } else {
+                snprintf(index_str, sizeof(index_str), "%%t%d", index);
+            }
+            
+            // Generate pointer arithmetic
+            fprintf(ctx.output, "  %%t%d = getelementptr i32, i32* %%t%d, i32 %s\n", 
+                    temp, array_ptr, index_str);
+            
+            // Load the value
+            int result = get_next_temp();
+            fprintf(ctx.output, "  %%t%d = load i32, i32* %%t%d\n", result, temp);
+            return result;
         }
         
         case AST_BINARY_OP: {
@@ -263,7 +412,7 @@ static int generate_expression(ast_node_t *node) {
         }
         
         default:
-            fprintf(stderr, "Unknown expression type\n");
+            fprintf(stderr, "Unknown expression type in generate_expression\n");
             return -1;
     }
 }
@@ -273,7 +422,7 @@ static void generate_statement(ast_node_t *node) {
     
     switch (node->type) {
         case AST_DECLARATION: {
-            add_symbol(node->data.declaration.name, node->data.declaration.type, 0, 0);
+            add_symbol(node->data.declaration.name, node->data.declaration.type_info, 0, 0);
             
             // Find the symbol we just added to get its unique LLVM name
             symbol_t *sym = find_symbol(node->data.declaration.name);
@@ -282,53 +431,140 @@ static void generate_statement(ast_node_t *node) {
                 return;
             }
             
-            fprintf(ctx.output, "  %%%s = alloca %s\n", 
-                    sym->llvm_name, get_llvm_type(node->data.declaration.type));
+            char *type_str = get_llvm_type_string(&sym->type_info);
+            fprintf(ctx.output, "  %%%s = alloca %s\n", sym->llvm_name, type_str);
             
             if (node->data.declaration.init) {
                 int init_value = generate_expression(node->data.declaration.init);
                 
                 if (node->data.declaration.init->type == AST_NUMBER) {
                     fprintf(ctx.output, "  store %s %d, %s* %%%s\n", 
-                            get_llvm_type(node->data.declaration.type), init_value,
-                            get_llvm_type(node->data.declaration.type), 
-                            sym->llvm_name);
+                            type_str, init_value, type_str, sym->llvm_name);
                 } else {
                     fprintf(ctx.output, "  store %s %%t%d, %s* %%%s\n", 
-                            get_llvm_type(node->data.declaration.type), init_value,
-                            get_llvm_type(node->data.declaration.type), 
-                            sym->llvm_name);
+                            type_str, init_value, type_str, sym->llvm_name);
                 }
+            }
+            
+            free(type_str);
+            break;
+        }
+        
+        case AST_ARRAY_DECL: {
+            add_symbol(node->data.array_decl.name, node->data.array_decl.type_info, 0, 0);
+            
+            symbol_t *sym = find_symbol(node->data.array_decl.name);
+            if (!sym) {
+                fprintf(stderr, "Internal error: symbol not found after adding\n");
+                return;
+            }
+            
+            if (node->data.array_decl.type_info.is_vla) {
+                // Variable Length Array
+                int size = generate_expression(node->data.array_decl.size);
+                int temp = get_next_temp();
+                
+                char size_str[32];
+                if (node->data.array_decl.size->type == AST_NUMBER) {
+                    snprintf(size_str, sizeof(size_str), "%d", size);
+                } else {
+                    snprintf(size_str, sizeof(size_str), "%%t%d", size);
+                }
+                
+                fprintf(ctx.output, "  %%t%d = alloca %s, i32 %s\n", 
+                        temp, get_llvm_type(sym->type_info.base_type), size_str);
+                fprintf(ctx.output, "  %%%s = alloca %s*\n", 
+                        sym->llvm_name, get_llvm_type(sym->type_info.base_type));
+                fprintf(ctx.output, "  store %s* %%t%d, %s** %%%s\n", 
+                        get_llvm_type(sym->type_info.base_type), temp,
+                        get_llvm_type(sym->type_info.base_type), sym->llvm_name);
+            } else {
+                // Fixed size array
+                int size = 1;
+                if (node->data.array_decl.size && node->data.array_decl.size->type == AST_NUMBER) {
+                    size = node->data.array_decl.size->data.number.value;
+                }
+                
+                fprintf(ctx.output, "  %%%s = alloca [%d x %s]\n", 
+                        sym->llvm_name, size, get_llvm_type(sym->type_info.base_type));
             }
             break;
         }
         
         case AST_ASSIGNMENT: {
-            int value = generate_expression(node->data.assignment.value);
-            
-            symbol_t *sym = find_symbol(node->data.assignment.name);
-            if (!sym) {
-                fprintf(stderr, "Undefined variable in assignment: %s\n", node->data.assignment.name);
-                return;
-            }
-            
-            if (sym->is_parameter) {
-                // For parameters, store to .addr
-                if (node->data.assignment.value->type == AST_NUMBER) {
-                    fprintf(ctx.output, "  store i32 %d, i32* %%%s.addr\n", 
-                            value, sym->llvm_name);
-                } else {
-                    fprintf(ctx.output, "  store i32 %%t%d, i32* %%%s.addr\n", 
-                            value, sym->llvm_name);
+            if (node->data.assignment.name) {
+                // Simple identifier assignment
+                int value = generate_expression(node->data.assignment.value);
+                
+                symbol_t *sym = find_symbol(node->data.assignment.name);
+                if (!sym) {
+                    fprintf(stderr, "Undefined variable in assignment: %s\n", node->data.assignment.name);
+                    return;
                 }
-            } else {
-                // For local variables, store to unique name
-                if (node->data.assignment.value->type == AST_NUMBER) {
-                    fprintf(ctx.output, "  store i32 %d, i32* %%%s\n", 
-                            value, sym->llvm_name);
+                
+                char *type_str = get_llvm_type_string(&sym->type_info);
+                
+                if (sym->is_parameter) {
+                    // For parameters, store to .addr
+                    if (node->data.assignment.value->type == AST_NUMBER) {
+                        fprintf(ctx.output, "  store %s %d, %s* %%%s.addr\n", 
+                                type_str, value, type_str, sym->llvm_name);
+                    } else {
+                        fprintf(ctx.output, "  store %s %%t%d, %s* %%%s.addr\n", 
+                                type_str, value, type_str, sym->llvm_name);
+                    }
                 } else {
-                    fprintf(ctx.output, "  store i32 %%t%d, i32* %%%s\n", 
-                            value, sym->llvm_name);
+                    // For local variables, store to unique name
+                    if (node->data.assignment.value->type == AST_NUMBER) {
+                        fprintf(ctx.output, "  store %s %d, %s* %%%s\n", 
+                                type_str, value, type_str, sym->llvm_name);
+                    } else {
+                        fprintf(ctx.output, "  store %s %%t%d, %s* %%%s\n", 
+                                type_str, value, type_str, sym->llvm_name);
+                    }
+                }
+                
+                free(type_str);
+            } else if (node->data.assignment.lvalue) {
+                // Assignment to lvalue (array element, pointer dereference, etc.)
+                int value = generate_expression(node->data.assignment.value);
+                
+                if (node->data.assignment.lvalue->type == AST_ARRAY_ACCESS) {
+                    // Handle array[index] = value
+                    ast_node_t *array = node->data.assignment.lvalue->data.array_access.array;
+                    ast_node_t *index = node->data.assignment.lvalue->data.array_access.index;
+                    
+                    int array_ptr = generate_expression(array);
+                    int index_val = generate_expression(index);
+                    int addr_temp = get_next_temp();
+                    
+                    char index_str[32];
+                    if (index->type == AST_NUMBER) {
+                        snprintf(index_str, sizeof(index_str), "%d", index_val);
+                    } else {
+                        snprintf(index_str, sizeof(index_str), "%%t%d", index_val);
+                    }
+                    
+                    // Generate address of array element
+                    fprintf(ctx.output, "  %%t%d = getelementptr i32, i32* %%t%d, i32 %s\n", 
+                            addr_temp, array_ptr, index_str);
+                    
+                    // Store value to that address
+                    if (node->data.assignment.value->type == AST_NUMBER) {
+                        fprintf(ctx.output, "  store i32 %d, i32* %%t%d\n", value, addr_temp);
+                    } else {
+                        fprintf(ctx.output, "  store i32 %%t%d, i32* %%t%d\n", value, addr_temp);
+                    }
+                    
+                } else if (node->data.assignment.lvalue->type == AST_DEREFERENCE) {
+                    // Handle *pointer = value
+                    int ptr = generate_expression(node->data.assignment.lvalue->data.dereference.operand);
+                    
+                    if (node->data.assignment.value->type == AST_NUMBER) {
+                        fprintf(ctx.output, "  store i32 %d, i32* %%t%d\n", value, ptr);
+                    } else {
+                        fprintf(ctx.output, "  store i32 %%t%d, i32* %%t%d\n", value, ptr);
+                    }
                 }
             }
             break;
@@ -484,20 +720,20 @@ static void generate_function(ast_node_t *node) {
     ctx.in_return_block = 0;
     
     // Function declaration
-    fprintf(ctx.output, "define %s @%s(", 
-            get_llvm_type(node->data.function.return_type),
-            node->data.function.name);
+    char *return_type_str = get_llvm_type_string(&node->data.function.return_type);
+    fprintf(ctx.output, "define %s @%s(", return_type_str, node->data.function.name);
     
     // Parameters
     for (int i = 0; i < node->data.function.param_count; i++) {
         if (i > 0) fprintf(ctx.output, ", ");
         ast_node_t *param = node->data.function.params[i];
-        fprintf(ctx.output, "%s %%%s", 
-                get_llvm_type(param->data.parameter.type),
-                param->data.parameter.name);
+        char *param_type_str = get_llvm_type_string(&param->data.parameter.type_info);
+        fprintf(ctx.output, "%s %%%s", param_type_str, param->data.parameter.name);
         
         // Add parameter to symbol table - mark as parameter!
-        add_symbol(param->data.parameter.name, param->data.parameter.type, 0, 1);
+        add_symbol(param->data.parameter.name, param->data.parameter.type_info, 0, 1);
+        
+        free(param_type_str);
     }
     
     fprintf(ctx.output, ") {\n");
@@ -506,14 +742,11 @@ static void generate_function(ast_node_t *node) {
     for (int i = 0; i < node->data.function.param_count; i++) {
         ast_node_t *param = node->data.function.params[i];
         symbol_t *sym = find_symbol(param->data.parameter.name);
-        fprintf(ctx.output, "  %%%s.addr = alloca %s\n", 
-                sym->llvm_name, 
-                get_llvm_type(param->data.parameter.type));
+        char *param_type_str = get_llvm_type_string(&param->data.parameter.type_info);
+        fprintf(ctx.output, "  %%%s.addr = alloca %s\n", sym->llvm_name, param_type_str);
         fprintf(ctx.output, "  store %s %%%s, %s* %%%s.addr\n", 
-                get_llvm_type(param->data.parameter.type), 
-                param->data.parameter.name,
-                get_llvm_type(param->data.parameter.type), 
-                sym->llvm_name);
+                param_type_str, param->data.parameter.name, param_type_str, sym->llvm_name);
+        free(param_type_str);
     }
     
     // Function body
@@ -521,7 +754,7 @@ static void generate_function(ast_node_t *node) {
     
     // Add default return if needed and we haven't already returned
     if (!ctx.in_return_block) {
-        if (strcmp(node->data.function.return_type, "void") == 0) {
+        if (strcmp(node->data.function.return_type.base_type, "void") == 0) {
             fprintf(ctx.output, "  ret void\n");
         } else {
             // For non-void functions, we should add a default return 0
@@ -530,6 +763,8 @@ static void generate_function(ast_node_t *node) {
     }
     
     fprintf(ctx.output, "}\n\n");
+    
+    free(return_type_str);
 }
 
 void generate_llvm_ir(ast_node_t *ast, FILE *output) {
@@ -544,18 +779,19 @@ void generate_llvm_ir(ast_node_t *ast, FILE *output) {
     ctx.in_return_block = 0;
     
     // Generate LLVM IR header
-    fprintf(output, "; Mini C Compiler - Generated LLVM IR\n\n");
+    fprintf(output, "; Mini C Compiler - Generated LLVM IR with Pointer Support\n\n");
     
     // Generate functions
     for (int i = 0; i < ast->data.program.func_count; i++) {
         generate_function(ast->data.program.functions[i]);
 
+        // Clean up symbols after each function
         while (ctx.symbols) {
             symbol_t *temp = ctx.symbols;
             ctx.symbols = ctx.symbols->next;
             free(temp->name);
             free(temp->llvm_name);
-            free(temp->type);
+            free_type_info(&temp->type_info);
             free(temp);
         }
     }

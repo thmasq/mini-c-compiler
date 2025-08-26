@@ -12,6 +12,25 @@ static ast_node_t *create_node(ast_node_type_t type) {
     return node;
 }
 
+type_info_t create_type_info(char *base_type, int pointer_level, int is_array, ast_node_t *array_size) {
+    type_info_t type_info;
+    type_info.base_type = base_type;
+    type_info.pointer_level = pointer_level;
+    type_info.is_array = is_array;
+    type_info.array_size = array_size;
+    type_info.is_vla = (is_array && array_size && array_size->type != AST_NUMBER);
+    return type_info;
+}
+
+declarator_t make_declarator(char *name, int pointer_level, int is_array, ast_node_t *array_size) {
+    declarator_t decl;
+    decl.name = name;
+    decl.pointer_level = pointer_level;
+    decl.is_array = is_array;
+    decl.array_size = array_size;
+    return decl;
+}
+
 ast_node_t *create_program(ast_node_t **functions, int func_count) {
     ast_node_t *node = create_node(AST_PROGRAM);
     node->data.program.functions = functions;
@@ -19,7 +38,7 @@ ast_node_t *create_program(ast_node_t **functions, int func_count) {
     return node;
 }
 
-ast_node_t *create_function(char *name, char *return_type, ast_node_t **params, int param_count, ast_node_t *body) {
+ast_node_t *create_function(char *name, type_info_t return_type, ast_node_t **params, int param_count, ast_node_t *body) {
     ast_node_t *node = create_node(AST_FUNCTION);
     node->data.function.name = name;
     node->data.function.return_type = return_type;
@@ -36,9 +55,9 @@ ast_node_t *create_compound_stmt(ast_node_t **statements, int stmt_count) {
     return node;
 }
 
-ast_node_t *create_declaration(char *type, char *name, ast_node_t *init) {
+ast_node_t *create_declaration(type_info_t type_info, char *name, ast_node_t *init) {
     ast_node_t *node = create_node(AST_DECLARATION);
-    node->data.declaration.type = type;
+    node->data.declaration.type_info = type_info;
     node->data.declaration.name = name;
     node->data.declaration.init = init;
     return node;
@@ -47,6 +66,15 @@ ast_node_t *create_declaration(char *type, char *name, ast_node_t *init) {
 ast_node_t *create_assignment(char *name, ast_node_t *value) {
     ast_node_t *node = create_node(AST_ASSIGNMENT);
     node->data.assignment.name = name;
+    node->data.assignment.lvalue = NULL;
+    node->data.assignment.value = value;
+    return node;
+}
+
+ast_node_t *create_assignment_to_lvalue(ast_node_t *lvalue, ast_node_t *value) {
+    ast_node_t *node = create_node(AST_ASSIGNMENT);
+    node->data.assignment.name = NULL;
+    node->data.assignment.lvalue = lvalue;
     node->data.assignment.value = value;
     return node;
 }
@@ -107,9 +135,9 @@ ast_node_t *create_number(int value) {
     return node;
 }
 
-ast_node_t *create_parameter(char *type, char *name) {
+ast_node_t *create_parameter(type_info_t type_info, char *name) {
     ast_node_t *node = create_node(AST_PARAMETER);
-    node->data.parameter.type = type;
+    node->data.parameter.type_info = type_info;
     node->data.parameter.name = name;
     return node;
 }
@@ -118,6 +146,44 @@ ast_node_t *create_expr_stmt(ast_node_t *expr) {
     ast_node_t *node = create_node(AST_EXPR_STMT);
     node->data.expr_stmt.expr = expr;
     return node;
+}
+
+ast_node_t *create_address_of(ast_node_t *operand) {
+    ast_node_t *node = create_node(AST_ADDRESS_OF);
+    node->data.address_of.operand = operand;
+    return node;
+}
+
+ast_node_t *create_dereference(ast_node_t *operand) {
+    ast_node_t *node = create_node(AST_DEREFERENCE);
+    node->data.dereference.operand = operand;
+    return node;
+}
+
+ast_node_t *create_array_access(ast_node_t *array, ast_node_t *index) {
+    ast_node_t *node = create_node(AST_ARRAY_ACCESS);
+    node->data.array_access.array = array;
+    node->data.array_access.index = index;
+    return node;
+}
+
+ast_node_t *create_array_declaration(type_info_t type_info, char *name, ast_node_t *size) {
+    ast_node_t *node = create_node(AST_ARRAY_DECL);
+    node->data.array_decl.type_info = type_info;
+    node->data.array_decl.name = name;
+    node->data.array_decl.size = size;
+    return node;
+}
+
+void free_type_info(type_info_t *type_info) {
+    if (type_info->base_type) {
+        free(type_info->base_type);
+        type_info->base_type = NULL;
+    }
+    if (type_info->array_size) {
+        free_ast(type_info->array_size);
+        type_info->array_size = NULL;
+    }
 }
 
 void free_ast(ast_node_t *node) {
@@ -133,7 +199,7 @@ void free_ast(ast_node_t *node) {
             
         case AST_FUNCTION:
             free(node->data.function.name);
-            free(node->data.function.return_type);
+            free_type_info(&node->data.function.return_type);
             for (int i = 0; i < node->data.function.param_count; i++) {
                 free_ast(node->data.function.params[i]);
             }
@@ -149,13 +215,14 @@ void free_ast(ast_node_t *node) {
             break;
             
         case AST_DECLARATION:
-            free(node->data.declaration.type);
+            free_type_info(&node->data.declaration.type_info);
             free(node->data.declaration.name);
             free_ast(node->data.declaration.init);
             break;
             
         case AST_ASSIGNMENT:
             free(node->data.assignment.name);
+            free_ast(node->data.assignment.lvalue);
             free_ast(node->data.assignment.value);
             break;
             
@@ -196,12 +263,31 @@ void free_ast(ast_node_t *node) {
             break;
             
         case AST_PARAMETER:
-            free(node->data.parameter.type);
+            free_type_info(&node->data.parameter.type_info);
             free(node->data.parameter.name);
             break;
             
         case AST_EXPR_STMT:
             free_ast(node->data.expr_stmt.expr);
+            break;
+            
+        case AST_ADDRESS_OF:
+            free_ast(node->data.address_of.operand);
+            break;
+            
+        case AST_DEREFERENCE:
+            free_ast(node->data.dereference.operand);
+            break;
+            
+        case AST_ARRAY_ACCESS:
+            free_ast(node->data.array_access.array);
+            free_ast(node->data.array_access.index);
+            break;
+            
+        case AST_ARRAY_DECL:
+            free_type_info(&node->data.array_decl.type_info);
+            free(node->data.array_decl.name);
+            free_ast(node->data.array_decl.size);
             break;
             
         case AST_NUMBER:

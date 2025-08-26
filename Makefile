@@ -22,7 +22,7 @@ LEXER_C = $(SRCDIR)/lexer.c
 PARSER_C = $(SRCDIR)/parser.c
 PARSER_H = $(SRCDIR)/parser.h
 
-.PHONY: all clean test test-advanced dirs help install-tests test-exec
+.PHONY: all clean test test-advanced dirs help install-tests test-exec test-pointers
 
 all: dirs $(TARGET)
 
@@ -165,13 +165,44 @@ test-example-exec: $(TARGET)
 	$(BUILDDIR)/test_example
 	@echo "Exit code: $$?"
 
+# Test pointer support (LLVM IR only)
+test-pointers: $(TARGET)
+	@echo "=== Running Pointer Test (LLVM IR) ==="
+	@if [ ! -f $(EXAMPLEDIR)/pointer_test.c ]; then \
+		echo "Pointer test file not found at $(EXAMPLEDIR)/pointer_test.c"; \
+		exit 1; \
+	fi
+	@echo "Compiling $(EXAMPLEDIR)/pointer_test.c to LLVM IR..."
+	./$(TARGET) -S $(EXAMPLEDIR)/pointer_test.c -o $(BUILDDIR)/test_pointers.ll
+	@echo ""
+	@echo "Generated LLVM IR (first 100 lines):"
+	@head -100 $(BUILDDIR)/test_pointers.ll
+
+# Test pointer support with executable
+test-pointers-exec: $(TARGET)
+	@echo "=== Running Pointer Test (Executable) ==="
+	@if [ ! -f $(EXAMPLEDIR)/pointer_test.c ]; then \
+		echo "Pointer test file not found at $(EXAMPLEDIR)/pointer_test.c"; \
+		exit 1; \
+	fi
+	@echo "Compiling $(EXAMPLEDIR)/pointer_test.c to executable..."
+	./$(TARGET) -c $(EXAMPLEDIR)/pointer_test.c -o $(BUILDDIR)/test_pointers
+	@echo "Running executable..."
+	$(BUILDDIR)/test_pointers
+	@echo "Exit code: $$?"
+	@if [ $$? -eq 0 ]; then \
+		echo "SUCCESS: All pointer tests passed!"; \
+	else \
+		echo "FAILURE: Some pointer tests failed."; \
+	fi
+
 # Run all tests
-test-all: test test-advanced test-example
+test-all: test test-advanced test-example test-pointers
 	@echo ""
 	@echo "=== All LLVM IR Tests Complete ==="
 
 # Run all executable tests
-test-all-exec: test-exec test-advanced-exec test-example-exec
+test-all-exec: test-exec test-advanced-exec test-example-exec test-pointers-exec
 	@echo ""
 	@echo "=== All Executable Tests Complete ==="
 
@@ -199,7 +230,7 @@ release: clean all
 
 # Show help
 help:
-	@echo "Mini C Compiler Build System"
+	@echo "Mini C Compiler Build System - With Pointer Support"
 	@echo ""
 	@echo "Setup:"
 	@echo "  install-tests     - Set up basic test files (run once)"
@@ -214,12 +245,14 @@ help:
 	@echo "  test              - Run basic arithmetic test (IR only)"
 	@echo "  test-advanced     - Run advanced fibonacci test (IR only)"
 	@echo "  test-example      - Run example program test (IR only)"
+	@echo "  test-pointers     - Run comprehensive pointer test (IR only)"
 	@echo "  test-all          - Run all IR generation tests"
 	@echo ""
 	@echo "Test targets (Executable generation):"
 	@echo "  test-exec         - Run basic test with executable"
 	@echo "  test-advanced-exec- Run advanced test with executable"
 	@echo "  test-example-exec - Run example test with executable"
+	@echo "  test-pointers-exec- Run pointer test with executable"
 	@echo "  test-all-exec     - Run all executable tests"
 	@echo ""
 	@echo "Cleanup:"
@@ -234,6 +267,6 @@ help:
 	@echo "  $(SRCDIR)/           - Source code"
 	@echo "  $(BUILDDIR)/         - Build artifacts"
 	@echo "  $(TESTDIR)/          - Test programs"
-	@echo "  $(EXAMPLEDIR)/       - Example programs"
+	@echo "  $(EXAMPLEDIR)/       - Example programs (includes pointer_test.c)"
 
 .DEFAULT_GOAL := all
