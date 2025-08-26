@@ -58,11 +58,14 @@ static char *string_duplicate(const char *str) {
 ">"             { return GT; }
 ">="            { return GE; }
 "!"             { return NOT; }
+"&"             { return AMPERSAND; }
 
 "("             { return LPAREN; }
 ")"             { return RPAREN; }
 "{"             { return LBRACE; }
 "}"             { return RBRACE; }
+"["             { return LBRACKET; }
+"]"             { return RBRACKET; }
 ";"             { return SEMICOLON; }
 ","             { return COMMA; }
 

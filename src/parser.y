@@ -32,7 +32,7 @@ static char *string_duplicate(const char *str) {
     int number;
     char *string;
     ast_node_t *node;
-    ast_node_t **node_list;
+    type_info_t *type;
     struct {
         ast_node_t **nodes;
         int count;
@@ -45,19 +45,21 @@ static char *string_duplicate(const char *str) {
 %token IF ELSE WHILE RETURN
 %token PLUS MINUS MULTIPLY DIVIDE MODULO
 %token ASSIGN EQ NE LT LE GT GE NOT
-%token LPAREN RPAREN LBRACE RBRACE SEMICOLON COMMA
+%token AMPERSAND
+%token LPAREN RPAREN LBRACE RBRACE LBRACKET RBRACKET SEMICOLON COMMA
 
 %type <node> program function declaration statement compound_statement
 %type <node> expression primary_expression assignment_statement
 %type <node> if_statement while_statement return_statement
 %type <node> parameter expression_statement
-%type <string> type_specifier
+%type <type> type_specifier pointer_type
 %type <node_array> function_list statement_list parameter_list argument_list
 
 %left EQ NE LT LE GT GE
 %left PLUS MINUS
 %left MULTIPLY DIVIDE MODULO
-%right NOT UMINUS
+%left LBRACKET
+%right NOT UMINUS DEREF ADDR
 %nonassoc LOWER_THAN_ELSE
 %nonassoc ELSE
 
@@ -112,9 +114,24 @@ parameter:
     ;
 
 type_specifier:
-    INT { $$ = string_duplicate("int"); }
-    | CHAR { $$ = string_duplicate("char"); }
-    | VOID { $$ = string_duplicate("void"); }
+    INT { 
+        $$ = create_basic_type("int"); 
+    }
+    | CHAR { 
+        $$ = create_basic_type("char"); 
+    }
+    | VOID { 
+        $$ = create_basic_type("void"); 
+    }
+    | pointer_type {
+        $$ = $1;
+    }
+    ;
+
+pointer_type:
+    type_specifier MULTIPLY {
+        $$ = create_pointer_type($1);
+    }
     ;
 
 compound_statement:
@@ -156,11 +173,26 @@ declaration:
     | type_specifier IDENTIFIER ASSIGN expression SEMICOLON {
         $$ = create_declaration($1, $2, $4);
     }
+    | type_specifier IDENTIFIER LBRACKET expression RBRACKET SEMICOLON {
+        type_info_t *array_type = create_array_type($1, $4);
+        $$ = create_declaration(array_type, $2, NULL);
+    }
+    | type_specifier IDENTIFIER LBRACKET expression RBRACKET ASSIGN LBRACE argument_list RBRACE SEMICOLON {
+        type_info_t *array_type = create_array_type($1, $4);
+        // For now, we'll ignore array initialization - could be extended later
+        $$ = create_declaration(array_type, $2, NULL);
+    }
+    | type_specifier IDENTIFIER LBRACKET RBRACKET SEMICOLON {
+        type_info_t *array_type = create_array_type($1, NULL); // VLA
+        $$ = create_declaration(array_type, $2, NULL);
+    }
     ;
 
 assignment_statement:
-    IDENTIFIER ASSIGN expression SEMICOLON {
-        $$ = create_assignment($1, $3);
+    expression ASSIGN expression SEMICOLON {
+        // Generic assignment: lvalue = rvalue
+        // We'll validate that $1 is a valid lvalue during codegen
+        $$ = create_assign_expr($1, $3);
     }
     ;
 
@@ -234,6 +266,15 @@ expression:
     }
     | NOT expression {
         $$ = create_unary_op(OP_NOT, $2);
+    }
+    | MULTIPLY expression %prec DEREF {
+        $$ = create_dereference($2);
+    }
+    | AMPERSAND expression %prec ADDR {
+        $$ = create_address_of($2);
+    }
+    | expression LBRACKET expression RBRACKET {
+        $$ = create_array_index($1, $3);
     }
     | LPAREN expression RPAREN {
         $$ = $2;
