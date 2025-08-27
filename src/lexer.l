@@ -53,16 +53,26 @@ static char *string_duplicate(const char *str) {
 "="             { return ASSIGN; }
 "=="            { return EQ; }
 "!="            { return NE; }
-"<"             { return LT; }
 "<="            { return LE; }
-">"             { return GT; }
 ">="            { return GE; }
+"<<"            { return LSHIFT; }
+">>"            { return RSHIFT; }
+"<"             { return LT; }
+">"             { return GT; }
+"&&"            { return LAND; }
+"||"            { return LOR; }
 "!"             { return NOT; }
+"&"             { return AMPERSAND; }
+"|"             { return PIPE; }
+"^"             { return CARET; }
+"~"             { return TILDE; }
 
 "("             { return LPAREN; }
 ")"             { return RPAREN; }
 "{"             { return LBRACE; }
 "}"             { return RBRACE; }
+"["             { return LBRACKET; }
+"]"             { return RBRACKET; }
 ";"             { return SEMICOLON; }
 ","             { return COMMA; }
 

@@ -26,6 +26,31 @@ static char *string_duplicate(const char *str) {
     strcpy(copy, str);
     return copy;
 }
+
+// Deep copy function for type_info_t
+static type_info_t deep_copy_type_info(const type_info_t *src) {
+    type_info_t result;
+    result.base_type = src->base_type ? string_duplicate(src->base_type) : NULL;
+    result.pointer_level = src->pointer_level;
+    result.is_array = src->is_array;
+    result.is_vla = src->is_vla;
+    result.array_size = NULL;
+    return result;
+}
+
+// Helper to create type_info from type_specifier and declarator
+static type_info_t make_type_info(type_info_t base_type, declarator_t decl) {
+    type_info_t result = deep_copy_type_info(&base_type);
+    result.pointer_level = decl.pointer_level;
+    result.is_array = decl.is_array;
+    result.array_size = NULL; // Don't store the AST node here to avoid double-free
+    if (decl.array_size && decl.array_size->type != AST_NUMBER) {
+        result.is_vla = 1;
+    } else {
+        result.is_vla = 0;
+    }
+    return result;
+}
 %}
 
 %union {
@@ -33,6 +58,8 @@ static char *string_duplicate(const char *str) {
     char *string;
     ast_node_t *node;
     ast_node_t **node_list;
+    type_info_t type_info;
+    declarator_t declarator;
     struct {
         ast_node_t **nodes;
         int count;
@@ -44,20 +71,33 @@ static char *string_duplicate(const char *str) {
 %token INT CHAR VOID
 %token IF ELSE WHILE RETURN
 %token PLUS MINUS MULTIPLY DIVIDE MODULO
-%token ASSIGN EQ NE LT LE GT GE NOT
-%token LPAREN RPAREN LBRACE RBRACE SEMICOLON COMMA
+%token ASSIGN EQ NE LT LE GT GE 
+%token NOT LAND LOR AMPERSAND PIPE CARET TILDE LSHIFT RSHIFT
+%token LPAREN RPAREN LBRACE RBRACE LBRACKET RBRACKET SEMICOLON COMMA
 
 %type <node> program function declaration statement compound_statement
 %type <node> expression primary_expression assignment_statement
 %type <node> if_statement while_statement return_statement
 %type <node> parameter expression_statement
-%type <string> type_specifier
+%type <type_info> type_specifier
+%type <declarator> declarator pointer_declarator direct_declarator
+%type <number> pointer
 %type <node_array> function_list statement_list parameter_list argument_list
 
-%left EQ NE LT LE GT GE
+// Operator precedence and associativity (lowest to highest precedence)
+%right ASSIGN
+%left LOR
+%left LAND
+%left PIPE
+%left CARET
+%left AMPERSAND
+%left EQ NE
+%left LT LE GT GE
+%left LSHIFT RSHIFT
 %left PLUS MINUS
 %left MULTIPLY DIVIDE MODULO
-%right NOT UMINUS
+%right NOT UMINUS USTAR UAMPERSAND UTILDE
+%left LBRACKET
 %nonassoc LOWER_THAN_ELSE
 %nonassoc ELSE
 
@@ -84,11 +124,17 @@ function_list:
     ;
 
 function:
-    type_specifier IDENTIFIER LPAREN parameter_list RPAREN compound_statement {
-        $$ = create_function($2, $1, $4.nodes, $4.count, $6);
+    type_specifier declarator LPAREN parameter_list RPAREN compound_statement {
+        type_info_t func_type = make_type_info($1, $2);
+        $$ = create_function(string_duplicate($2.name), func_type, $4.nodes, $4.count, $6);
+        // Clean up the original type_info since we made a deep copy
+        free_type_info(&$1);
     }
-    | type_specifier IDENTIFIER LPAREN RPAREN compound_statement {
-        $$ = create_function($2, $1, NULL, 0, $5);
+    | type_specifier declarator LPAREN RPAREN compound_statement {
+        type_info_t func_type = make_type_info($1, $2);
+        $$ = create_function(string_duplicate($2.name), func_type, NULL, 0, $5);
+        // Clean up the original type_info since we made a deep copy
+        free_type_info(&$1);
     }
     ;
 
@@ -106,15 +152,57 @@ parameter_list:
     ;
 
 parameter:
-    type_specifier IDENTIFIER {
-        $$ = create_parameter($1, $2);
+    type_specifier declarator {
+        type_info_t param_type = make_type_info($1, $2);
+        $$ = create_parameter(param_type, string_duplicate($2.name));
+        // Clean up the original type_info since we made a deep copy
+        free_type_info(&$1);
     }
     ;
 
 type_specifier:
-    INT { $$ = string_duplicate("int"); }
-    | CHAR { $$ = string_duplicate("char"); }
-    | VOID { $$ = string_duplicate("void"); }
+    INT { 
+        $$ = create_type_info(string_duplicate("int"), 0, 0, NULL); 
+    }
+    | CHAR { 
+        $$ = create_type_info(string_duplicate("char"), 0, 0, NULL); 
+    }
+    | VOID { 
+        $$ = create_type_info(string_duplicate("void"), 0, 0, NULL); 
+    }
+    ;
+
+declarator:
+    pointer_declarator
+    | direct_declarator
+    ;
+
+pointer_declarator:
+    pointer direct_declarator {
+        $$ = $2;
+        $$.pointer_level = $1;
+    }
+    ;
+
+pointer:
+    MULTIPLY { $$ = 1; }
+    | pointer MULTIPLY { $$ = $1 + 1; }
+    ;
+
+direct_declarator:
+    IDENTIFIER {
+        $$ = make_declarator($1, 0, 0, NULL);
+    }
+    | direct_declarator LBRACKET RBRACKET {
+        $$ = $1;
+        $$.is_array = 1;
+        $$.array_size = NULL;
+    }
+    | direct_declarator LBRACKET expression RBRACKET {
+        $$ = $1;
+        $$.is_array = 1;
+        $$.array_size = $3;
+    }
     ;
 
 compound_statement:
@@ -150,17 +238,54 @@ statement:
     ;
 
 declaration:
-    type_specifier IDENTIFIER SEMICOLON {
-        $$ = create_declaration($1, $2, NULL);
+    type_specifier declarator SEMICOLON {
+        type_info_t var_type = make_type_info($1, $2);
+        if ($2.is_array) {
+            // For array declarations, store array_size only in the array_decl, not in type_info
+            $$ = create_array_declaration(var_type, string_duplicate($2.name), $2.array_size);
+        } else {
+            $$ = create_declaration(var_type, string_duplicate($2.name), NULL);
+        }
+        // Clean up the original type_info since we made a deep copy
+        free_type_info(&$1);
     }
-    | type_specifier IDENTIFIER ASSIGN expression SEMICOLON {
-        $$ = create_declaration($1, $2, $4);
+    | type_specifier declarator ASSIGN expression SEMICOLON {
+        type_info_t var_type = make_type_info($1, $2);
+        if ($2.is_array) {
+            // Arrays with initializers - for simplicity, ignore initializer for now
+            $$ = create_array_declaration(var_type, string_duplicate($2.name), $2.array_size);
+        } else {
+            $$ = create_declaration(var_type, string_duplicate($2.name), $4);
+        }
+        // Clean up the original type_info since we made a deep copy
+        free_type_info(&$1);
+    }
+    | type_specifier declarator ASSIGN LBRACE argument_list RBRACE SEMICOLON {
+        type_info_t var_type = make_type_info($1, $2);
+        // Array initialization - for simplicity, ignore initializer for now
+        if ($2.is_array) {
+            $$ = create_array_declaration(var_type, string_duplicate($2.name), $2.array_size);
+        } else {
+            $$ = create_declaration(var_type, string_duplicate($2.name), NULL);
+        }
+        // Clean up the original type_info since we made a deep copy
+        free_type_info(&$1);
     }
     ;
 
 assignment_statement:
     IDENTIFIER ASSIGN expression SEMICOLON {
         $$ = create_assignment($1, $3);
+    }
+    | expression LBRACKET expression RBRACKET ASSIGN expression SEMICOLON {
+        // Handle array[index] = value
+        ast_node_t *array_access = create_array_access($1, $3);
+        $$ = create_assignment_to_lvalue(array_access, $6);
+    }
+    | MULTIPLY primary_expression ASSIGN expression SEMICOLON {
+        // Handle *pointer = value
+        ast_node_t *deref = create_dereference($2);
+        $$ = create_assignment_to_lvalue(deref, $4);
     }
     ;
 
@@ -196,6 +321,7 @@ expression_statement:
 
 expression:
     primary_expression
+    // Arithmetic operators
     | expression PLUS expression {
         $$ = create_binary_op(OP_ADD, $1, $3);
     }
@@ -211,6 +337,7 @@ expression:
     | expression MODULO expression {
         $$ = create_binary_op(OP_MOD, $1, $3);
     }
+    // Comparison operators
     | expression EQ expression {
         $$ = create_binary_op(OP_EQ, $1, $3);
     }
@@ -229,11 +356,48 @@ expression:
     | expression GE expression {
         $$ = create_binary_op(OP_GE, $1, $3);
     }
+    // Shift operators
+    | expression LSHIFT expression {
+        $$ = create_binary_op(OP_LSHIFT, $1, $3);
+    }
+    | expression RSHIFT expression {
+        $$ = create_binary_op(OP_RSHIFT, $1, $3);
+    }
+    // Bitwise operators
+    | expression AMPERSAND expression {
+        $$ = create_binary_op(OP_BAND, $1, $3);
+    }
+    | expression PIPE expression {
+        $$ = create_binary_op(OP_BOR, $1, $3);
+    }
+    | expression CARET expression {
+        $$ = create_binary_op(OP_BXOR, $1, $3);
+    }
+    // Logical operators
+    | expression LAND expression {
+        $$ = create_binary_op(OP_LAND, $1, $3);
+    }
+    | expression LOR expression {
+        $$ = create_binary_op(OP_LOR, $1, $3);
+    }
+    // Unary operators
     | MINUS expression %prec UMINUS {
         $$ = create_unary_op(OP_NEG, $2);
     }
     | NOT expression {
         $$ = create_unary_op(OP_NOT, $2);
+    }
+    | TILDE expression %prec UTILDE {
+        $$ = create_unary_op(OP_BNOT, $2);
+    }
+    | AMPERSAND expression %prec UAMPERSAND {
+        $$ = create_address_of($2);
+    }
+    | MULTIPLY expression %prec USTAR {
+        $$ = create_dereference($2);
+    }
+    | expression LBRACKET expression RBRACKET {
+        $$ = create_array_access($1, $3);
     }
     | LPAREN expression RPAREN {
         $$ = $2;
