@@ -43,11 +43,11 @@ typedef struct {
 
 static codegen_context_t ctx;
 
-// Helper function to check if an AST node is a comparison or logical operation
-static int is_comparison_or_logical_op(ast_node_t *node) {
+// Helper function to check if an AST node is a comparison operation that returns i1
+static int is_comparison_op(ast_node_t *node) {
     if (node && node->type == AST_BINARY_OP) {
         binary_op_t op = node->data.binary_op.op;
-        return (op >= OP_EQ && op <= OP_GE) || (op == OP_LAND) || (op == OP_LOR);
+        return (op >= OP_EQ && op <= OP_GE);
     }
     return 0;
 }
@@ -493,7 +493,7 @@ static int generate_expression(ast_node_t *node) {
                 
                 // Convert to boolean if needed
                 int left_bool;
-                if (is_comparison_or_logical_op(node->data.binary_op.left)) {
+                if (is_comparison_op(node->data.binary_op.left)) {
                     left_bool = left;
                 } else {
                     left_bool = get_next_temp();
@@ -521,7 +521,7 @@ static int generate_expression(ast_node_t *node) {
                 
                 // Convert to boolean if needed
                 int right_bool;
-                if (is_comparison_or_logical_op(node->data.binary_op.right)) {
+                if (is_comparison_op(node->data.binary_op.right)) {
                     right_bool = right;
                 } else {
                     right_bool = get_next_temp();
@@ -561,7 +561,7 @@ static int generate_expression(ast_node_t *node) {
                 
                 // Convert to boolean if needed
                 int left_bool;
-                if (is_comparison_or_logical_op(node->data.binary_op.left)) {
+                if (is_comparison_op(node->data.binary_op.left)) {
                     left_bool = left;
                 } else {
                     left_bool = get_next_temp();
@@ -589,7 +589,7 @@ static int generate_expression(ast_node_t *node) {
                 
                 // Convert to boolean if needed
                 int right_bool;
-                if (is_comparison_or_logical_op(node->data.binary_op.right)) {
+                if (is_comparison_op(node->data.binary_op.right)) {
                     right_bool = right;
                 } else {
                     right_bool = get_next_temp();
@@ -947,7 +947,7 @@ static void generate_statement(ast_node_t *node) {
             
             // Smart boolean conversion - avoid double conversion for comparison ops
             int bool_temp;
-            if (is_comparison_or_logical_op(node->data.if_stmt.condition)) {
+            if (is_comparison_op(node->data.if_stmt.condition)) {
                 // Condition already returns i1, use directly
                 bool_temp = cond;
             } else {
@@ -1013,7 +1013,7 @@ static void generate_statement(ast_node_t *node) {
             
             // Smart boolean conversion
             int bool_temp;
-            if (is_comparison_or_logical_op(node->data.while_stmt.condition)) {
+            if (is_comparison_op(node->data.while_stmt.condition)) {
                 bool_temp = cond;
             } else {
                 bool_temp = get_next_temp();
