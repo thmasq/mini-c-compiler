@@ -178,6 +178,68 @@ static const char *get_llvm_type(const char *c_type) {
     return "i32"; // default
 }
 
+// Enhanced function to determine the result type of an expression
+static char *get_expression_result_type(ast_node_t *node) {
+    if (!node) return string_duplicate("i32"); // fallback
+    
+    switch (node->type) {
+        case AST_IDENTIFIER: {
+            symbol_t *sym = find_symbol(node->data.identifier.name);
+            if (!sym) return string_duplicate("i32"); // fallback
+            return get_llvm_type_string(&sym->type_info);
+        }
+        
+        case AST_DEREFERENCE: {
+            char *operand_type = get_expression_result_type(node->data.dereference.operand);
+            // Remove one level of indirection
+            int len = strlen(operand_type);
+            if (len > 0 && operand_type[len-1] == '*') {
+                operand_type[len-1] = '\0'; // Remove the last '*'
+            }
+            return operand_type;
+        }
+        
+        case AST_ADDRESS_OF: {
+            char *operand_type = get_expression_result_type(node->data.address_of.operand);
+            // Add one level of indirection
+            char *result = malloc(strlen(operand_type) + 2);
+            sprintf(result, "%s*", operand_type);
+            free(operand_type);
+            return result;
+        }
+        
+        case AST_ARRAY_ACCESS: {
+            // Array access returns the element type
+            if (node->data.array_access.array->type == AST_IDENTIFIER) {
+                symbol_t *sym = find_symbol(node->data.array_access.array->data.identifier.name);
+                if (sym && sym->type_info.is_array) {
+                    return string_duplicate(get_llvm_type(sym->type_info.base_type));
+                }
+            }
+            // For pointer arithmetic, assume i32
+            return string_duplicate("i32");
+        }
+        
+        case AST_NUMBER:
+            return string_duplicate("i32");
+            
+        case AST_BINARY_OP:
+            // Most binary operations result in i32
+            if (node->data.binary_op.op >= OP_EQ && node->data.binary_op.op <= OP_GE) {
+                return string_duplicate("i1"); // comparison operations return boolean
+            }
+            return string_duplicate("i32");
+            
+        case AST_CALL:
+            // Function calls return i32 (could be enhanced to track function return types)
+            return string_duplicate("i32");
+            
+        // For other expressions, assume i32 for now
+        default:
+            return string_duplicate("i32");
+    }
+}
+
 // Helper to get array size from AST node or type_info
 static int get_array_size(ast_node_t *size_node, type_info_t *type_info) {
     if (size_node && size_node->type == AST_NUMBER) {
@@ -313,15 +375,20 @@ static int generate_expression(ast_node_t *node) {
             int ptr = generate_expression(node->data.dereference.operand);
             int temp = get_next_temp();
             
+            // Get the result type (what we're loading)
+            char *result_type = get_expression_result_type(node);
+            
             if (node->data.dereference.operand->type == AST_NUMBER) {
                 // This shouldn't happen in well-formed C, but handle it
                 fprintf(stderr, "Warning: Dereferencing constant\n");
-                fprintf(ctx.output, "  %%t%d = inttoptr i32 %d to i32*\n", temp, ptr);
+                fprintf(ctx.output, "  %%t%d = inttoptr i32 %d to %s*\n", temp, ptr, result_type);
                 int temp2 = get_next_temp();
-                fprintf(ctx.output, "  %%t%d = load i32, i32* %%t%d\n", temp2, temp);
+                fprintf(ctx.output, "  %%t%d = load %s, %s* %%t%d\n", temp2, result_type, result_type, temp);
+                free(result_type);
                 return temp2;
             } else {
-                fprintf(ctx.output, "  %%t%d = load i32, i32* %%t%d\n", temp, ptr);
+                fprintf(ctx.output, "  %%t%d = load %s, %s* %%t%d\n", temp, result_type, result_type, ptr);
+                free(result_type);
                 return temp;
             }
         }
@@ -1081,7 +1148,7 @@ void generate_llvm_ir(ast_node_t *ast, FILE *output) {
     ctx.in_return_block = 0;
     
     // Generate LLVM IR header
-    fprintf(output, "; Mini C Compiler - Generated LLVM IR with Pointer Support\n\n");
+    fprintf(output, "; Mini C Compiler - Generated LLVM IR\n\n");
     
     // Generate functions
     for (int i = 0; i < ast->data.program.func_count; i++) {
