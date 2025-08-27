@@ -366,10 +366,10 @@ expression:
     | TILDE expression %prec UTILDE {
         $$ = create_unary_op(OP_BNOT, $2);
     }
-    | AMPERSAND primary_expression %prec UAMPERSAND {
+    | AMPERSAND expression %prec UAMPERSAND {
         $$ = create_address_of($2);
     }
-    | MULTIPLY primary_expression %prec USTAR {
+    | MULTIPLY expression %prec USTAR {
         $$ = create_dereference($2);
     }
     | expression LBRACKET expression RBRACKET {
