@@ -180,10 +180,7 @@ void free_type_info(type_info_t *type_info) {
         free(type_info->base_type);
         type_info->base_type = NULL;
     }
-    if (type_info->array_size) {
-        free_ast(type_info->array_size);
-        type_info->array_size = NULL;
-    }
+    type_info->array_size = NULL;
 }
 
 void free_ast(ast_node_t *node) {

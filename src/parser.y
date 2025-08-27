@@ -27,12 +27,23 @@ static char *string_duplicate(const char *str) {
     return copy;
 }
 
+// Deep copy function for type_info_t
+static type_info_t deep_copy_type_info(const type_info_t *src) {
+    type_info_t result;
+    result.base_type = src->base_type ? string_duplicate(src->base_type) : NULL;
+    result.pointer_level = src->pointer_level;
+    result.is_array = src->is_array;
+    result.is_vla = src->is_vla;
+    result.array_size = NULL;
+    return result;
+}
+
 // Helper to create type_info from type_specifier and declarator
 static type_info_t make_type_info(type_info_t base_type, declarator_t decl) {
-    type_info_t result = base_type;
+    type_info_t result = deep_copy_type_info(&base_type);
     result.pointer_level = decl.pointer_level;
     result.is_array = decl.is_array;
-    result.array_size = decl.array_size;
+    result.array_size = NULL; // Don't store the AST node here to avoid double-free
     if (decl.array_size && decl.array_size->type != AST_NUMBER) {
         result.is_vla = 1;
     } else {
@@ -115,11 +126,15 @@ function_list:
 function:
     type_specifier declarator LPAREN parameter_list RPAREN compound_statement {
         type_info_t func_type = make_type_info($1, $2);
-        $$ = create_function($2.name, func_type, $4.nodes, $4.count, $6);
+        $$ = create_function(string_duplicate($2.name), func_type, $4.nodes, $4.count, $6);
+        // Clean up the original type_info since we made a deep copy
+        free_type_info(&$1);
     }
     | type_specifier declarator LPAREN RPAREN compound_statement {
         type_info_t func_type = make_type_info($1, $2);
-        $$ = create_function($2.name, func_type, NULL, 0, $5);
+        $$ = create_function(string_duplicate($2.name), func_type, NULL, 0, $5);
+        // Clean up the original type_info since we made a deep copy
+        free_type_info(&$1);
     }
     ;
 
@@ -139,7 +154,9 @@ parameter_list:
 parameter:
     type_specifier declarator {
         type_info_t param_type = make_type_info($1, $2);
-        $$ = create_parameter(param_type, $2.name);
+        $$ = create_parameter(param_type, string_duplicate($2.name));
+        // Clean up the original type_info since we made a deep copy
+        free_type_info(&$1);
     }
     ;
 
@@ -224,28 +241,35 @@ declaration:
     type_specifier declarator SEMICOLON {
         type_info_t var_type = make_type_info($1, $2);
         if ($2.is_array) {
-            $$ = create_array_declaration(var_type, $2.name, $2.array_size);
+            // For array declarations, store array_size only in the array_decl, not in type_info
+            $$ = create_array_declaration(var_type, string_duplicate($2.name), $2.array_size);
         } else {
-            $$ = create_declaration(var_type, $2.name, NULL);
+            $$ = create_declaration(var_type, string_duplicate($2.name), NULL);
         }
+        // Clean up the original type_info since we made a deep copy
+        free_type_info(&$1);
     }
     | type_specifier declarator ASSIGN expression SEMICOLON {
         type_info_t var_type = make_type_info($1, $2);
         if ($2.is_array) {
             // Arrays with initializers - for simplicity, ignore initializer for now
-            $$ = create_array_declaration(var_type, $2.name, $2.array_size);
+            $$ = create_array_declaration(var_type, string_duplicate($2.name), $2.array_size);
         } else {
-            $$ = create_declaration(var_type, $2.name, $4);
+            $$ = create_declaration(var_type, string_duplicate($2.name), $4);
         }
+        // Clean up the original type_info since we made a deep copy
+        free_type_info(&$1);
     }
     | type_specifier declarator ASSIGN LBRACE argument_list RBRACE SEMICOLON {
         type_info_t var_type = make_type_info($1, $2);
         // Array initialization - for simplicity, ignore initializer for now
         if ($2.is_array) {
-            $$ = create_array_declaration(var_type, $2.name, $2.array_size);
+            $$ = create_array_declaration(var_type, string_duplicate($2.name), $2.array_size);
         } else {
-            $$ = create_declaration(var_type, $2.name, NULL);
+            $$ = create_declaration(var_type, string_duplicate($2.name), NULL);
         }
+        // Clean up the original type_info since we made a deep copy
+        free_type_info(&$1);
     }
     ;
 
