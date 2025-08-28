@@ -14,6 +14,10 @@ void yyerror(const char *s);
 
 ast_node_t *ast_root = NULL;
 
+// Error recovery globals
+int error_count = 0;
+int max_errors = 20;
+
 // Portable string duplication function
 static char *string_duplicate(const char *str) {
     if (!str) return NULL;
@@ -43,13 +47,24 @@ static type_info_t make_type_info(type_info_t base_type, declarator_t decl) {
     type_info_t result = deep_copy_type_info(&base_type);
     result.pointer_level = decl.pointer_level;
     result.is_array = decl.is_array;
-    result.array_size = NULL; // Don't store the AST node here to avoid double-free
+    result.array_size = NULL;
     if (decl.array_size && decl.array_size->type != AST_NUMBER) {
         result.is_vla = 1;
     } else {
         result.is_vla = 0;
     }
     return result;
+}
+
+// Simple error recovery helpers
+static ast_node_t *create_error_statement() {
+    return create_expr_stmt(create_number(0));
+}
+
+static ast_node_t *create_error_function() {
+    type_info_t error_type = create_type_info(string_duplicate("int"), 0, 0, NULL);
+    ast_node_t *empty_body = create_compound_stmt(NULL, 0);
+    return create_function(string_duplicate("__error_function__"), error_type, NULL, 0, empty_body);
 }
 %}
 
@@ -84,7 +99,10 @@ static type_info_t make_type_info(type_info_t base_type, declarator_t decl) {
 %type <number> pointer
 %type <node_array> function_list statement_list parameter_list argument_list
 
-// Operator precedence and associativity (lowest to highest precedence)
+// Use the modern parse.error directive
+%define parse.error verbose
+
+// Operator precedence and associativity
 %right ASSIGN
 %left LOR
 %left LAND
@@ -108,18 +126,31 @@ program:
         ast_root = create_program($1.nodes, $1.count);
         $$ = ast_root;
     }
+    | /* empty program */ {
+        ast_root = create_program(NULL, 0);
+        $$ = ast_root;
+    }
     ;
 
 function_list:
     function {
-        $$.nodes = malloc(sizeof(ast_node_t*));
-        $$.nodes[0] = $1;
-        $$.count = 1;
+        if ($1) {
+            $$.nodes = malloc(sizeof(ast_node_t*));
+            $$.nodes[0] = $1;
+            $$.count = 1;
+        } else {
+            $$.nodes = NULL;
+            $$.count = 0;
+        }
     }
     | function_list function {
-        $$.count = $1.count + 1;
-        $$.nodes = realloc($1.nodes, $$.count * sizeof(ast_node_t*));
-        $$.nodes[$$.count - 1] = $2;
+        if ($2) {
+            $$.count = $1.count + 1;
+            $$.nodes = realloc($1.nodes, $$.count * sizeof(ast_node_t*));
+            $$.nodes[$$.count - 1] = $2;
+        } else {
+            $$ = $1;
+        }
     }
     ;
 
@@ -127,27 +158,44 @@ function:
     type_specifier declarator LPAREN parameter_list RPAREN compound_statement {
         type_info_t func_type = make_type_info($1, $2);
         $$ = create_function(string_duplicate($2.name), func_type, $4.nodes, $4.count, $6);
-        // Clean up the original type_info since we made a deep copy
         free_type_info(&$1);
     }
     | type_specifier declarator LPAREN RPAREN compound_statement {
         type_info_t func_type = make_type_info($1, $2);
         $$ = create_function(string_duplicate($2.name), func_type, NULL, 0, $5);
-        // Clean up the original type_info since we made a deep copy
         free_type_info(&$1);
+    }
+    | error RBRACE {
+        // Skip to end of malformed function body
+        $$ = NULL;
+        yyerrok;
+    }
+    | error SEMICOLON {
+        // Skip malformed function declaration
+        $$ = NULL;
+        yyerrok;
     }
     ;
 
 parameter_list:
     parameter {
-        $$.nodes = malloc(sizeof(ast_node_t*));
-        $$.nodes[0] = $1;
-        $$.count = 1;
+        if ($1) {
+            $$.nodes = malloc(sizeof(ast_node_t*));
+            $$.nodes[0] = $1;
+            $$.count = 1;
+        } else {
+            $$.nodes = NULL;
+            $$.count = 0;
+        }
     }
     | parameter_list COMMA parameter {
-        $$.count = $1.count + 1;
-        $$.nodes = realloc($1.nodes, $$.count * sizeof(ast_node_t*));
-        $$.nodes[$$.count - 1] = $3;
+        if ($3) {
+            $$.count = $1.count + 1;
+            $$.nodes = realloc($1.nodes, $$.count * sizeof(ast_node_t*));
+            $$.nodes[$$.count - 1] = $3;
+        } else {
+            $$ = $1;
+        }
     }
     ;
 
@@ -155,7 +203,6 @@ parameter:
     type_specifier declarator {
         type_info_t param_type = make_type_info($1, $2);
         $$ = create_parameter(param_type, string_duplicate($2.name));
-        // Clean up the original type_info since we made a deep copy
         free_type_info(&$1);
     }
     ;
@@ -216,14 +263,23 @@ compound_statement:
 
 statement_list:
     statement {
-        $$.nodes = malloc(sizeof(ast_node_t*));
-        $$.nodes[0] = $1;
-        $$.count = 1;
+        if ($1) {
+            $$.nodes = malloc(sizeof(ast_node_t*));
+            $$.nodes[0] = $1;
+            $$.count = 1;
+        } else {
+            $$.nodes = NULL;
+            $$.count = 0;
+        }
     }
     | statement_list statement {
-        $$.count = $1.count + 1;
-        $$.nodes = realloc($1.nodes, $$.count * sizeof(ast_node_t*));
-        $$.nodes[$$.count - 1] = $2;
+        if ($2) {
+            $$.count = $1.count + 1;
+            $$.nodes = realloc($1.nodes, $$.count * sizeof(ast_node_t*));
+            $$.nodes[$$.count - 1] = $2;
+        } else {
+            $$ = $1;
+        }
     }
     ;
 
@@ -235,40 +291,39 @@ statement:
     | return_statement
     | expression_statement
     | compound_statement
+    | error SEMICOLON {
+        // Skip malformed statement
+        $$ = NULL;
+        yyerrok;
+    }
     ;
 
 declaration:
     type_specifier declarator SEMICOLON {
         type_info_t var_type = make_type_info($1, $2);
         if ($2.is_array) {
-            // For array declarations, store array_size only in the array_decl, not in type_info
             $$ = create_array_declaration(var_type, string_duplicate($2.name), $2.array_size);
         } else {
             $$ = create_declaration(var_type, string_duplicate($2.name), NULL);
         }
-        // Clean up the original type_info since we made a deep copy
         free_type_info(&$1);
     }
     | type_specifier declarator ASSIGN expression SEMICOLON {
         type_info_t var_type = make_type_info($1, $2);
         if ($2.is_array) {
-            // Arrays with initializers - for simplicity, ignore initializer for now
             $$ = create_array_declaration(var_type, string_duplicate($2.name), $2.array_size);
         } else {
             $$ = create_declaration(var_type, string_duplicate($2.name), $4);
         }
-        // Clean up the original type_info since we made a deep copy
         free_type_info(&$1);
     }
     | type_specifier declarator ASSIGN LBRACE argument_list RBRACE SEMICOLON {
         type_info_t var_type = make_type_info($1, $2);
-        // Array initialization - for simplicity, ignore initializer for now
         if ($2.is_array) {
             $$ = create_array_declaration(var_type, string_duplicate($2.name), $2.array_size);
         } else {
             $$ = create_declaration(var_type, string_duplicate($2.name), NULL);
         }
-        // Clean up the original type_info since we made a deep copy
         free_type_info(&$1);
     }
     ;
@@ -278,12 +333,10 @@ assignment_statement:
         $$ = create_assignment($1, $3);
     }
     | expression LBRACKET expression RBRACKET ASSIGN expression SEMICOLON {
-        // Handle array[index] = value
         ast_node_t *array_access = create_array_access($1, $3);
         $$ = create_assignment_to_lvalue(array_access, $6);
     }
     | MULTIPLY primary_expression ASSIGN expression SEMICOLON {
-        // Handle *pointer = value
         ast_node_t *deref = create_dereference($2);
         $$ = create_assignment_to_lvalue(deref, $4);
     }
@@ -435,5 +488,11 @@ argument_list:
 %%
 
 void yyerror(const char *s) {
-    fprintf(stderr, "Parse error at line %d: %s\n", line_number, s);
+    fprintf(stderr, "Error at line %d: %s\n", line_number, s);
+    error_count++;
+    
+    if (error_count >= max_errors) {
+        fprintf(stderr, "Too many errors (%d), stopping compilation.\n", max_errors);
+        exit(1);
+    }
 }

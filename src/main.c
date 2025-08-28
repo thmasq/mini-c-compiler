@@ -9,6 +9,7 @@
 extern FILE *yyin;
 extern int yyparse();
 extern ast_node_t *ast_root;
+extern int error_count;  // From parser.y
 
 void print_usage(const char *program_name) {
     printf("Usage: %s [options] <input_file>\n", program_name);
@@ -17,6 +18,7 @@ void print_usage(const char *program_name) {
     printf("  -S                Generate LLVM IR only (default)\n");
     printf("  -c                Compile to executable\n");
     printf("  -O <level>        Optimization level (0-3, default: 0)\n");
+    printf("  -f                Force compilation despite errors (for testing)\n");
     printf("  -h, --help        Show this help message\n");
 }
 
@@ -36,6 +38,7 @@ int main(int argc, char *argv[]) {
     FILE *output = stdout;
     int compile_to_executable = 0;
     int optimization_level = 0;
+    int force_compilation = 0;  // New flag to force compilation despite errors
     
     // Parse command line arguments
     for (int i = 1; i < argc; i++) {
@@ -50,6 +53,8 @@ int main(int argc, char *argv[]) {
             compile_to_executable = 1;
         } else if (strcmp(argv[i], "-S") == 0) {
             compile_to_executable = 0;
+        } else if (strcmp(argv[i], "-f") == 0) {
+            force_compilation = 1;
         } else if (strcmp(argv[i], "-O") == 0) {
             if (i + 1 < argc) {
                 optimization_level = atoi(argv[++i]);
@@ -114,32 +119,65 @@ int main(int argc, char *argv[]) {
     // Parse the input
     printf("Compiling %s...\n", input_file);
     
-    if (yyparse() != 0) {
-        fprintf(stderr, "Parse failed\n");
-        fclose(yyin);
-        if (output != stdout) fclose(output);
-        return 1;
+    // Reset error count for this compilation
+    error_count = 0;
+    
+    // Parse - this will now continue through errors
+    int parse_result = yyparse();
+    
+    // Report parsing results
+    if (error_count > 0) {
+        printf("Parsing completed with %d error(s)\n", error_count);
+        
+        if (!force_compilation) {
+            printf("Compilation stopped due to errors. Use -f to force compilation.\n");
+            fclose(yyin);
+            if (output != stdout) fclose(output);
+            if (ir_file) {
+                unlink(ir_file);
+                free(ir_file);
+            }
+            return 1;
+        } else {
+            printf("Forcing compilation despite errors (-f flag used).\n");
+        }
+    } else {
+        printf("Parsing completed successfully.\n");
     }
     
+    // Check if we have a valid AST
     if (!ast_root) {
-        fprintf(stderr, "No AST generated\n");
+        fprintf(stderr, "No AST generated - cannot continue\n");
         fclose(yyin);
         if (output != stdout) fclose(output);
+        if (ir_file) {
+            unlink(ir_file);
+            free(ir_file);
+        }
         return 1;
     }
     
-    printf("Generating LLVM IR...\n");
-    
-    // Generate LLVM IR
-    generate_llvm_ir(ast_root, output);
+    // Only generate code if parsing was successful or forced
+    if (error_count == 0 || force_compilation) {
+        printf("Generating LLVM IR...\n");
+        
+        // Generate LLVM IR
+        generate_llvm_ir(ast_root, output);
+        
+        if (error_count > 0) {
+            printf("Warning: IR generated with parse errors - may not be valid\n");
+        } else {
+            printf("LLVM IR generation complete.\n");
+        }
+    }
     
     // Cleanup parsing resources
     free_ast(ast_root);
     fclose(yyin);
     if (output != stdout) fclose(output);
     
-    // If compiling to executable, use clang to compile the IR
-    if (compile_to_executable) {
+    // If compiling to executable and no critical errors, use clang
+    if (compile_to_executable && (error_count == 0 || force_compilation)) {
         char command[1024];
         const char *final_output = output_file ? output_file : "a.out";
         
@@ -156,17 +194,27 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         
-        printf("Compilation successful! Executable: %s\n", final_output);
+        if (error_count > 0) {
+            printf("Compilation completed with warnings! Executable: %s\n", final_output);
+        } else {
+            printf("Compilation successful! Executable: %s\n", final_output);
+        }
         
         // Clean up temporary IR file
         unlink(ir_file);
         free(ir_file);
+    } else if (compile_to_executable) {
+        printf("Executable generation skipped due to errors.\n");
+        if (ir_file) {
+            unlink(ir_file);
+            free(ir_file);
+        }
     } else {
-        printf("LLVM IR generation complete.\n");
         if (output_file) {
             printf("Output written to %s\n", output_file);
         }
     }
     
-    return 0;
+    // Return appropriate exit code
+    return (error_count > 0 && !force_compilation) ? 1 : 0;
 }

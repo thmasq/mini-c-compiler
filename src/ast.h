@@ -204,5 +204,6 @@ void generate_llvm_ir(ast_node_t *ast, FILE *output);
 extern FILE *yyin;
 extern int yyparse();
 extern ast_node_t *ast_root;
+extern int error_count;
 
 #endif
