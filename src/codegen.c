@@ -457,6 +457,131 @@ static int generate_expression(ast_node_t *node) {
             
             return temp;
         }
+
+        case AST_ASSIGNMENT: {
+            // Handle assignment as expression (returns the assigned value)
+            int value = generate_expression(node->data.assignment.value);
+            
+            if (node->data.assignment.name) {
+                // Simple identifier assignment
+                symbol_t *sym = find_symbol(ctx.symbol_table, node->data.assignment.name);
+                if (!sym) {
+                    fprintf(stderr, "Undefined variable in assignment: %s\n", node->data.assignment.name);
+                    return -1;
+                }
+                
+                char *type_str = get_llvm_type_string(&sym->type_info);
+                
+                // Store the value
+                if (sym->is_parameter) {
+                    if (node->data.assignment.value->type == AST_NUMBER) {
+                        fprintf(ctx.output, "  store %s %d, %s* %%%s.addr\n", 
+                                type_str, value, type_str, sym->llvm_name);
+                    } else {
+                        fprintf(ctx.output, "  store %s %%t%d, %s* %%%s.addr\n", 
+                                type_str, value, type_str, sym->llvm_name);
+                    }
+                } else {
+                    if (node->data.assignment.value->type == AST_NUMBER) {
+                        fprintf(ctx.output, "  store %s %d, %s* %%%s\n", 
+                                type_str, value, type_str, sym->llvm_name);
+                    } else {
+                        fprintf(ctx.output, "  store %s %%t%d, %s* %%%s\n", 
+                                type_str, value, type_str, sym->llvm_name);
+                    }
+                }
+                
+                free(type_str);
+                
+                // Return the assigned value
+                return value;
+                
+            } else if (node->data.assignment.lvalue) {
+                // Assignment to lvalue - similar to statement version but return value
+                // Handle array access, dereference, etc.
+                if (node->data.assignment.lvalue->type == AST_ARRAY_ACCESS) {
+                    ast_node_t *array = node->data.assignment.lvalue->data.array_access.array;
+                    ast_node_t *index = node->data.assignment.lvalue->data.array_access.index;
+                    
+                    if (array->type == AST_IDENTIFIER) {
+                        symbol_t *sym = find_symbol(ctx.symbol_table, array->data.identifier.name);
+                        if (!sym) {
+                            fprintf(stderr, "Undefined array in assignment: %s\n", array->data.identifier.name);
+                            return -1;
+                        }
+                        
+                        int index_val = generate_expression(index);
+                        int addr_temp = get_next_temp();
+                        
+                        char index_str[32];
+                        if (index->type == AST_NUMBER) {
+                            snprintf(index_str, sizeof(index_str), "%d", index_val);
+                        } else {
+                            snprintf(index_str, sizeof(index_str), "%%t%d", index_val);
+                        }
+                        
+                        char *element_type = get_llvm_type_string(&node->data.assignment.lvalue->data.array_access.element_type);
+                        
+                        if (sym->type_info.is_array) {
+                            if (sym->is_parameter) {
+                                int ptr_temp = get_next_temp();
+                                fprintf(ctx.output, "  %%t%d = load %s*, %s** %%%s.addr\n", 
+                                        ptr_temp, element_type, element_type, sym->llvm_name);
+                                fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n", 
+                                        addr_temp, element_type, element_type, ptr_temp, index_str);
+                            } else if (sym->type_info.is_vla) {
+                                int ptr_temp = get_next_temp();
+                                fprintf(ctx.output, "  %%t%d = load %s*, %s** %%%s\n", 
+                                        ptr_temp, element_type, element_type, sym->llvm_name);
+                                fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n", 
+                                        addr_temp, element_type, element_type, ptr_temp, index_str);
+                            } else {
+                                size_t array_length = sym->size / get_type_size(&sym->type_info);
+                                fprintf(ctx.output, "  %%t%d = getelementptr [%zu x %s], [%zu x %s]* %%%s, i32 0, i32 %s\n", 
+                                        addr_temp, array_length, element_type, array_length, element_type, 
+                                        sym->llvm_name, index_str);
+                            }
+                        }
+                        
+                        // Store value
+                        if (node->data.assignment.value->type == AST_NUMBER) {
+                            fprintf(ctx.output, "  store %s %d, %s* %%t%d\n", 
+                                    element_type, value, element_type, addr_temp);
+                        } else {
+                            fprintf(ctx.output, "  store %s %%t%d, %s* %%t%d\n", 
+                                    element_type, value, element_type, addr_temp);
+                        }
+                        
+                        free(element_type);
+                        return value;
+                    }
+                } else if (node->data.assignment.lvalue->type == AST_DEREFERENCE) {
+                    // Handle *pointer = value
+                    int ptr = generate_expression(node->data.assignment.lvalue->data.dereference.operand);
+                    char *result_type = get_llvm_type_string(&node->data.assignment.lvalue->data.dereference.result_type);
+                    
+                    char ptr_str[32];
+                    if (node->data.assignment.lvalue->data.dereference.operand->type == AST_NUMBER) {
+                        snprintf(ptr_str, sizeof(ptr_str), "%d", ptr);
+                    } else {
+                        snprintf(ptr_str, sizeof(ptr_str), "%%t%d", ptr);
+                    }
+                    
+                    if (node->data.assignment.value->type == AST_NUMBER) {
+                        fprintf(ctx.output, "  store %s %d, %s* %s\n", 
+                                result_type, value, result_type, ptr_str);
+                    } else {
+                        fprintf(ctx.output, "  store %s %%t%d, %s* %s\n", 
+                                result_type, value, result_type, ptr_str);
+                    }
+                    
+                    free(result_type);
+                    return value;
+                }
+            }
+            
+            return -1;
+        }
         
         case AST_UNARY_OP: {
             // Handle increment/decrement operators
@@ -681,8 +806,112 @@ static int generate_expression(ast_node_t *node) {
                 free(var_type_str);
                 return temp;
             }
+            else if (operand->type == AST_ARRAY_ACCESS) {
+                // Handle &array[index] - return address of element
+                ast_node_t *array_node = operand->data.array_access.array;
+                ast_node_t *index_node = operand->data.array_access.index;
+                
+                if (array_node->type == AST_IDENTIFIER) {
+                    symbol_t *sym = find_symbol(ctx.symbol_table, array_node->data.identifier.name);
+                    if (!sym) {
+                        fprintf(stderr, "Undefined array in address-of: %s\n", 
+                                array_node->data.identifier.name);
+                        return -1;
+                    }
+                    
+                    int index = generate_expression(index_node);
+                    int addr_temp = get_next_temp();
+                    
+                    char index_str[32];
+                    if (index_node->type == AST_NUMBER) {
+                        snprintf(index_str, sizeof(index_str), "%d", index);
+                    } else {
+                        snprintf(index_str, sizeof(index_str), "%%t%d", index);
+                    }
+                    
+                    char *element_type = get_llvm_type_string(&operand->data.array_access.element_type);
+                    
+                    if (sym->type_info.is_array) {
+                        if (sym->is_parameter) {
+                            int ptr_temp = get_next_temp();
+                            fprintf(ctx.output, "  %%t%d = load %s*, %s** %%%s.addr\n", 
+                                    ptr_temp, element_type, element_type, sym->llvm_name);
+                            fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n", 
+                                    addr_temp, element_type, element_type, ptr_temp, index_str);
+                        } else if (sym->type_info.is_vla) {
+                            int ptr_temp = get_next_temp();
+                            fprintf(ctx.output, "  %%t%d = load %s*, %s** %%%s\n", 
+                                    ptr_temp, element_type, element_type, sym->llvm_name);
+                            fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n", 
+                                    addr_temp, element_type, element_type, ptr_temp, index_str);
+                        } else {
+                            if (sym->type_info.array_size && sym->type_info.array_size->type == AST_NUMBER) {
+                                size_t array_length = sym->type_info.array_size->data.number.value;
+                                fprintf(ctx.output, "  %%t%d = getelementptr [%zu x %s], [%zu x %s]* %%%s, i32 0, i32 %s\n", 
+                                        addr_temp, array_length, element_type, array_length, element_type, 
+                                        sym->llvm_name, index_str);
+                            } else {
+                                fprintf(stderr, "Cannot take address of incomplete array element\n");
+                                free(element_type);
+                                return -1;
+                            }
+                        }
+                    } else if (sym->type_info.pointer_level > 0) {
+                        int ptr_temp = get_next_temp();
+                        char *ptr_type = get_llvm_type_string(&sym->type_info);
+                        fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s\n", 
+                                ptr_temp, ptr_type, ptr_type, sym->llvm_name);
+                        fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n", 
+                                addr_temp, element_type, element_type, ptr_temp, index_str);
+                        free(ptr_type);
+                    }
+                    
+                    free(element_type);
+                    return addr_temp;
+                }
+            }
+            else if (operand->type == AST_DEREFERENCE) {
+                // Handle &(*ptr) - simplifies to ptr
+                return generate_expression(operand->data.dereference.operand);
+            }
+            else if (operand->type == AST_MEMBER_ACCESS) {
+                // Handle &obj.member
+                ast_node_t *object = operand->data.member_access.object;
+                const char *member_name = operand->data.member_access.member;
+                
+                if (object->type == AST_IDENTIFIER) {
+                    symbol_t *obj_sym = find_symbol(ctx.symbol_table, object->data.identifier.name);
+                    if (!obj_sym || (!obj_sym->type_info.is_struct && !obj_sym->type_info.is_union)) {
+                        fprintf(stderr, "Member access on non-struct/union in address-of\n");
+                        return -1;
+                    }
+                    
+                    symbol_t *struct_sym = find_symbol(ctx.symbol_table, obj_sym->type_info.base_type);
+                    if (!struct_sym) {
+                        fprintf(stderr, "Unknown struct/union type: %s\n", obj_sym->type_info.base_type);
+                        return -1;
+                    }
+                    
+                    symbol_t *member = find_struct_member(struct_sym, member_name);
+                    if (!member) {
+                        fprintf(stderr, "Unknown member: %s\n", member_name);
+                        return -1;
+                    }
+                    
+                    int addr_temp = get_next_temp();
+                    char *struct_type = get_llvm_type_string(&obj_sym->type_info);
+                    
+                    // Get address of member
+                    fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%%s, i32 0, i32 %zu\n", 
+                            addr_temp, struct_type, struct_type, obj_sym->llvm_name, 
+                            member->offset);
+                    
+                    free(struct_type);
+                    return addr_temp;
+                }
+            }
             
-            fprintf(stderr, "Address-of on complex expression not implemented\n");
+            fprintf(stderr, "Address-of on complex expression not fully implemented\n");
             return -1;
         }
         
@@ -706,7 +935,7 @@ static int generate_expression(ast_node_t *node) {
             return temp;
         }
         
-        case AST_ARRAY_ACCESS: {
+case AST_ARRAY_ACCESS: {
             // array[index] is equivalent to *(array + index)
             ast_node_t *array_node = node->data.array_access.array;
             ast_node_t *index_node = node->data.array_access.index;
@@ -731,14 +960,17 @@ static int generate_expression(ast_node_t *node) {
                 
                 char *element_type = get_llvm_type_string(&node->data.array_access.element_type);
                 
-                if (sym->type_info.is_array) {
+                // Handle different array types
+                if (sym->type_info.is_array || sym->type_info.pointer_level > 0) {
                     if (sym->is_parameter) {
                         // Parameter array: load pointer first
                         int ptr_temp = get_next_temp();
-                        fprintf(ctx.output, "  %%t%d = load %s*, %s** %%%s.addr\n", 
-                                ptr_temp, element_type, element_type, sym->llvm_name);
+                        char *param_type = get_llvm_type_string(&sym->type_info);
+                        fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s.addr\n", 
+                                ptr_temp, param_type, param_type, sym->llvm_name);
                         fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n", 
                                 addr_temp, element_type, element_type, ptr_temp, index_str);
+                        free(param_type);
                     } else if (sym->type_info.is_vla) {
                         // VLA: load pointer first
                         int ptr_temp = get_next_temp();
@@ -746,15 +978,35 @@ static int generate_expression(ast_node_t *node) {
                                 ptr_temp, element_type, element_type, sym->llvm_name);
                         fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n", 
                                 addr_temp, element_type, element_type, ptr_temp, index_str);
-                    } else {
+                    } else if (sym->type_info.is_array) {
                         // Fixed array
-                        size_t array_length = sym->size / get_type_size(&sym->type_info);
-                        fprintf(ctx.output, "  %%t%d = getelementptr [%zu x %s], [%zu x %s]* %%%s, i32 0, i32 %s\n", 
-                                addr_temp, array_length, element_type, array_length, element_type, 
-                                sym->llvm_name, index_str);
+                        if (sym->type_info.array_size && sym->type_info.array_size->type == AST_NUMBER) {
+                            size_t array_length = sym->type_info.array_size->data.number.value;
+                            fprintf(ctx.output, "  %%t%d = getelementptr [%zu x %s], [%zu x %s]* %%%s, i32 0, i32 %s\n", 
+                                    addr_temp, array_length, element_type, array_length, element_type, 
+                                    sym->llvm_name, index_str);
+                        } else {
+                            // Incomplete array - treat as pointer
+                            int ptr_temp = get_next_temp();
+                            char *ptr_type = get_llvm_type_string(&sym->type_info);
+                            fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s\n", 
+                                    ptr_temp, ptr_type, ptr_type, sym->llvm_name);
+                            fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n", 
+                                    addr_temp, element_type, element_type, ptr_temp, index_str);
+                            free(ptr_type);
+                        }
+                    } else if (sym->type_info.pointer_level > 0) {
+                        // Pointer access
+                        int ptr_temp = get_next_temp();
+                        char *ptr_type = get_llvm_type_string(&sym->type_info);
+                        fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s\n", 
+                                ptr_temp, ptr_type, ptr_type, sym->llvm_name);
+                        fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n", 
+                                addr_temp, element_type, element_type, ptr_temp, index_str);
+                        free(ptr_type);
                     }
                 } else {
-                    fprintf(stderr, "Array access on non-array variable: %s\n", 
+                    fprintf(stderr, "Array access on non-array/pointer variable: %s\n", 
                             array_node->data.identifier.name);
                     free(element_type);
                     return -1;
