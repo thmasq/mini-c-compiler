@@ -16,11 +16,9 @@ void yyerror(const char *s);
 
 ast_node_t *ast_root = NULL;
 symbol_table_t *global_symbol_table = NULL;
-
 // Error recovery globals
 int error_count = 0;
 int max_errors = 20;
-
 // Portable string duplication function
 static char *string_duplicate(const char *str) {
     if (!str) return NULL;
@@ -87,12 +85,12 @@ static ast_node_t *create_error_expression() {
 // Helper to calculate sizes during parsing
 static void calculate_and_store_sizes(ast_node_t *node) {
     if (!node || !global_symbol_table) return;
-    
     switch (node->type) {
         case AST_SIZEOF:
             if (node->data.sizeof_op.is_type) {
                 // Calculate size from type info stored in operand
-                node->data.sizeof_op.size_value = 4; // Placeholder - will be calculated in semantic analysis
+                node->data.sizeof_op.size_value = 4;
+                // Placeholder - will be calculated in semantic analysis
             } else if (node->data.sizeof_op.operand) {
                 // Calculate size from expression type
                 type_info_t expr_type = get_expression_type(node->data.sizeof_op.operand, global_symbol_table);
@@ -127,7 +125,7 @@ static void calculate_and_store_sizes(ast_node_t *node) {
         int count;
     } member_array;
     struct {
-        enum_value_t *values;
+        enum_value_t **values;
         int count;
     } enum_array;
 }
@@ -177,11 +175,11 @@ static void calculate_and_store_sizes(ast_node_t *node) {
 %type <qualifier> type_qualifier type_qualifier_list
 
 %type <node_array> block_item_list parameter_type_list parameter_list argument_expression_list
-%type <node_array> struct_declaration_list enumerator_list designator_list
+%type <node_array> struct_declaration_list struct_declaration designator_list
+%type <enum_array> enumerator_list enumerator
 
-%type <member_array> struct_declaration struct_declarator_list
+%type <member_array> struct_declarator_list
 %type <member_info> struct_declarator
-%type <enum_array> enumerator
 %type <enum_value> enumerator_item
 
 %type <binary_op> assignment_operator
@@ -213,7 +211,8 @@ static void calculate_and_store_sizes(ast_node_t *node) {
 /* Top level */
 translation_unit
     : external_declaration {
-        ast_node_t *decls[1] = {$1};
+        ast_node_t **decls = malloc(sizeof(ast_node_t*));
+        decls[0] = $1;
         $$ = create_program(decls, $1 ? 1 : 0);
         ast_root = $$;
     }
@@ -221,7 +220,7 @@ translation_unit
         if ($2) {
             $$ = $1;
             $$->data.program.decl_count++;
-            $$->data.program.declarations = realloc($$->data.program.declarations, 
+            $$->data.program.declarations = realloc($$->data.program.declarations,
                                                    $$->data.program.decl_count * sizeof(ast_node_t*));
             $$->data.program.declarations[$$->data.program.decl_count - 1] = $2;
         } else {
@@ -248,12 +247,12 @@ function_definition
         type_info_t func_type = make_complete_type($1, $2);
         ast_node_t **params = NULL;
         int param_count = 0;
-        
+
         if ($2.is_function && $2.params) {
             params = $2.params;
             param_count = $2.param_count;
         }
-        
+
         $$ = create_function(string_duplicate($2.name), func_type, params, param_count, $3);
         free_type_info(&$1);
     }
@@ -370,12 +369,12 @@ struct_or_union
 
 struct_declaration_list
     : struct_declaration { $$ = $1; }
-    | struct_declaration_list struct_declaration { 
-        $$.nodes = realloc($1.nodes, ($1.count + $2.count) * sizeof(ast_node_t*));
+    | struct_declaration_list struct_declaration {
+        $$.count = $1.count + $2.count;
+        $$.nodes = realloc($1.nodes, $$.count * sizeof(ast_node_t*));
         for (int i = 0; i < $2.count; i++) {
             $$.nodes[$1.count + i] = $2.nodes[i];
         }
-        $$.count = $1.count + $2.count;
         free($2.nodes);
     }
     ;
@@ -428,18 +427,18 @@ struct_declarator_list
 
 struct_declarator
     : declarator {
-        $$ = create_member_info(string_duplicate($1.name), 
+        $$ = create_member_info(string_duplicate($1.name),
                                create_type_info(string_duplicate("int"), $1.pointer_level, $1.is_array, $1.array_size), 0);
     }
     | COLON constant_expression {
-        $$ = create_member_info(string_duplicate(""), 
-                               create_type_info(string_duplicate("int"), 0, 0, NULL), 
+        $$ = create_member_info(string_duplicate(""),
+                               create_type_info(string_duplicate("int"), 0, 0, NULL),
                                $2->data.number.value);
         $$->bit_field_expr = $2;
     }
     | declarator COLON constant_expression {
-        $$ = create_member_info(string_duplicate($1.name), 
-                               create_type_info(string_duplicate("int"), $1.pointer_level, $1.is_array, $1.array_size), 
+        $$ = create_member_info(string_duplicate($1.name),
+                               create_type_info(string_duplicate("int"), $1.pointer_level, $1.is_array, $1.array_size),
                                $3->data.number.value);
         $$->bit_field_expr = $3;
     }
@@ -471,9 +470,9 @@ enum_specifier
 
 enumerator_list
     : enumerator { $$ = $1; }
-    | enumerator_list COMMA enumerator { 
+    | enumerator_list COMMA enumerator {
         $$.count = $1.count + $3.count;
-        $$.values = realloc($1.values, $$.count * sizeof(enum_value_t));
+        $$.values = realloc($1.values, $$.count * sizeof(enum_value_t*));
         for (int i = 0; i < $3.count; i++) {
             $$.values[$1.count + i] = $3.values[i];
         }
@@ -484,9 +483,8 @@ enumerator_list
 enumerator
     : enumerator_item {
         $$.count = 1;
-        $$.values = malloc(sizeof(enum_value_t));
-        $$.values[0] = *$1;
-        free($1);
+        $$.values = malloc(sizeof(enum_value_t*));
+        $$.values[0] = $1;
     }
     ;
 
@@ -495,7 +493,8 @@ enumerator_item
         $$ = create_enum_value(string_duplicate($1), 0);
     }
     | IDENTIFIER ASSIGN constant_expression {
-        int value = ($3->type == AST_NUMBER) ? $3->data.number.value : 0;
+        int value = ($3->type == AST_NUMBER) ?
+        $3->data.number.value : 0;
         $$ = create_enum_value(string_duplicate($1), value);
         $$->value_expr = $3;
     }
@@ -605,8 +604,8 @@ type_qualifier_list
 
 parameter_type_list
     : parameter_list { $$ = $1; }
-    | parameter_list COMMA ELLIPSIS { 
-        $$ = $1; 
+    | parameter_list COMMA ELLIPSIS {
+        $$ = $1;
         // Mark as variadic - would need to track this in declarator
     }
     ;
@@ -746,21 +745,25 @@ iteration_statement
         $$ = create_do_while_stmt($2, $5);
     }
     | FOR LPAREN expression_statement expression_statement RPAREN statement {
-        ast_node_t *init = ($3->data.expr_stmt.expr) ? $3->data.expr_stmt.expr : NULL;
+        ast_node_t *init = ($3->data.expr_stmt.expr) ?
+        $3->data.expr_stmt.expr : NULL;
         ast_node_t *cond = ($4->data.expr_stmt.expr) ? $4->data.expr_stmt.expr : NULL;
         $$ = create_for_stmt(init, cond, NULL, $6);
     }
     | FOR LPAREN expression_statement expression_statement expression RPAREN statement {
-        ast_node_t *init = ($3->data.expr_stmt.expr) ? $3->data.expr_stmt.expr : NULL;
+        ast_node_t *init = ($3->data.expr_stmt.expr) ?
+        $3->data.expr_stmt.expr : NULL;
         ast_node_t *cond = ($4->data.expr_stmt.expr) ? $4->data.expr_stmt.expr : NULL;
         $$ = create_for_stmt(init, cond, $5, $7);
     }
     | FOR LPAREN declaration expression_statement RPAREN statement {
-        ast_node_t *cond = ($4->data.expr_stmt.expr) ? $4->data.expr_stmt.expr : NULL;
+        ast_node_t *cond = ($4->data.expr_stmt.expr) ?
+        $4->data.expr_stmt.expr : NULL;
         $$ = create_for_stmt($3, cond, NULL, $6);
     }
     | FOR LPAREN declaration expression_statement expression RPAREN statement {
-        ast_node_t *cond = ($4->data.expr_stmt.expr) ? $4->data.expr_stmt.expr : NULL;
+        ast_node_t *cond = ($4->data.expr_stmt.expr) ?
+        $4->data.expr_stmt.expr : NULL;
         $$ = create_for_stmt($3, cond, $5, $7);
     }
     ;
@@ -869,7 +872,8 @@ unary_expression
         $$ = create_dereference($2);
     }
     | PLUS cast_expression %prec UNARY_PLUS {
-        $$ = $2; // Unary plus is effectively a no-op
+        $$ = $2;
+        // Unary plus is effectively a no-op
     }
     | MINUS cast_expression %prec UNARY_MINUS {
         $$ = create_unary_op(OP_NEG, $2);
@@ -1048,11 +1052,13 @@ initializer
 
 initializer_list
     : initializer {
-        ast_node_t *values[1] = {$1};
+        ast_node_t **values = malloc(sizeof(ast_node_t*));
+        values[0] = $1;
         $$ = create_initializer_list(values, 1);
     }
     | designation initializer {
-        ast_node_t *values[1] = {$2};
+        ast_node_t **values = malloc(sizeof(ast_node_t*));
+        values[0] = $2;
         $$ = create_initializer_list(values, 1);
     }
     | initializer_list COMMA initializer {
@@ -1088,7 +1094,8 @@ designator
 /* Top-level declaration handling */
 declaration
     : declaration_specifiers SEMICOLON {
-        $$ = NULL; // Empty declaration
+        $$ = NULL;
+        // Empty declaration
     }
     | declaration_specifiers init_declarator_list SEMICOLON {
         $$ = $2;
@@ -1103,7 +1110,7 @@ declaration
 void yyerror(const char *s) {
     fprintf(stderr, "Error at line %d, column %d: %s\n", line_number, column, s);
     error_count++;
-    
+
     if (error_count >= max_errors) {
         fprintf(stderr, "Too many errors (%d), stopping compilation.\n", max_errors);
         exit(1);
