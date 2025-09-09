@@ -129,7 +129,6 @@ IS              ((u|U)|(u|U)?(l|L|ll|LL)|(l|L|ll|LL)(u|U))
 
 "//".*$                 { /* Single-line comment */ }
 
-; /* Keywords */
 "auto"                  { count_chars(); return AUTO; }
 "_Bool"                 { count_chars(); return BOOL; }
 "break"                 { count_chars(); return BREAK; }
@@ -243,6 +242,7 @@ L?\"(\\.|[^\\"\n])*\"   { count_chars();
 ">="                    { count_chars(); return GE_OP; }
 "=="                    { count_chars(); return EQ_OP; }
 "!="                    { count_chars(); return NE_OP; }
+"\;"                    { count_chars(); return SEMICOLON; }
 ("{"|"<%")              { count_chars(); return LBRACE; }
 ("}"|"%>")              { count_chars(); return RBRACE; }
 ","                     { count_chars(); return COMMA; }
