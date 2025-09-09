@@ -14,7 +14,7 @@ BISON = bison
 
 # Target and source files
 TARGET = minicc
-SOURCES = main.c ast.c codegen.c lexer.c parser.c
+SOURCES = main.c ast.c codegen.c lexer.c parser.c symbol_table.c
 OBJECTS = $(SOURCES:%.c=$(BUILDDIR)/%.o)
 
 # Generated files (in src directory)
@@ -57,6 +57,9 @@ $(BUILDDIR)/lexer.o: $(LEXER_C) $(SRCDIR)/ast.h $(PARSER_H)
 
 $(BUILDDIR)/parser.o: $(PARSER_C) $(SRCDIR)/ast.h
 	$(CC) $(CFLAGS) -Wno-unused-function -c -o $@ $<
+
+$(BUILDDIR)/symbol_table.o: $(SRCDIR)/symbol_table.c $(SRCDIR)/symbol_table.h
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Install basic test files (run once to set up)
 install-tests:
