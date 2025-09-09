@@ -292,8 +292,7 @@ int main(int argc, char *argv[]) {
         printf("Phase 1: Lexical and syntactic analysis...\n");
     }
     
-    // Parse - this will now continue through errors
-    int parse_result = yyparse();
+    yyparse();
     
     // Report parsing results
     if (error_count > 0) {
