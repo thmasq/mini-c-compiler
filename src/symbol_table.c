@@ -36,6 +36,27 @@ static char *string_duplicate(const char *str) {
     return copy;
 }
 
+// Deep copy function for type_info_t with proper memory management
+static type_info_t deep_copy_type_info(const type_info_t *src) {
+    type_info_t result;
+    result.base_type = src->base_type ? string_duplicate(src->base_type) : NULL;
+    result.pointer_level = src->pointer_level;
+    result.is_array = src->is_array;
+    result.is_vla = src->is_vla;
+    result.is_function = src->is_function;
+    result.is_struct = src->is_struct;
+    result.is_union = src->is_union;
+    result.is_enum = src->is_enum;
+    result.is_incomplete = src->is_incomplete;
+    result.storage_class = src->storage_class;
+    result.qualifiers = src->qualifiers;
+    result.array_size = NULL;
+    result.param_types = NULL;
+    result.param_count = src->param_count;
+    result.is_variadic = src->is_variadic;
+    return result;
+}
+
 // Alignment calculation helper
 static size_t align_to(size_t size, size_t alignment) {
     return (size + alignment - 1) & ~(alignment - 1);
@@ -63,6 +84,38 @@ symbol_table_t *create_symbol_table(void) {
     return table;
 }
 
+// Free a single symbol and all its memory
+void free_symbol(symbol_t *sym) {
+    if (!sym) return;
+    
+    free(sym->name);
+    free(sym->llvm_name);
+    free_type_info(&sym->type_info);
+    
+    if (sym->array_sizes) {
+        free(sym->array_sizes);
+    }
+    
+    if (sym->members) {
+        // Note: Don't free the members themselves here as they might be shared
+        // The actual member symbols are freed when their scope is destroyed
+        free(sym->members);
+    }
+    
+    free(sym->label_name);
+    free(sym);
+}
+
+// Clean up symbols in a scope
+static void free_scope_symbols(symbol_t *symbols) {
+    symbol_t *sym = symbols;
+    while (sym) {
+        symbol_t *next = sym->next;
+        free_symbol(sym);
+        sym = next;
+    }
+}
+
 // Destroy symbol table and free all memory
 void destroy_symbol_table(symbol_table_t *table) {
     if (!table) return;
@@ -73,32 +126,9 @@ void destroy_symbol_table(symbol_table_t *table) {
     }
     
     // Clean up global scope
-    symbol_t *sym = table->global_scope->symbols;
-    while (sym) {
-        symbol_t *next = sym->next;
-        
-        // Free symbol-specific data
-        free(sym->name);
-        free(sym->llvm_name);
-        free(sym->type_info.base_type);
-        
-        if (sym->array_sizes) {
-            free(sym->array_sizes);
-        }
-        
-        if (sym->members) {
-            for (int i = 0; i < sym->member_count; i++) {
-                // Note: Don't free members themselves here as they're managed separately
-            }
-            free(sym->members);
-        }
-        
-        free(sym->label_name);
-        free(sym);
-        sym = next;
-    }
-    
+    free_scope_symbols(table->global_scope->symbols);
     free(table->global_scope);
+    
     free(table->current_function);
     free(table);
 }
@@ -123,27 +153,7 @@ void exit_scope(symbol_table_t *table) {
     table->scope_counter--;
     
     // Free all symbols in the exiting scope
-    symbol_t *sym = old_scope->symbols;
-    while (sym) {
-        symbol_t *next = sym->next;
-        
-        free(sym->name);
-        free(sym->llvm_name);
-        free(sym->type_info.base_type);
-        
-        if (sym->array_sizes) {
-            free(sym->array_sizes);
-        }
-        
-        if (sym->members) {
-            free(sym->members);
-        }
-        
-        free(sym->label_name);
-        free(sym);
-        sym = next;
-    }
-    
+    free_scope_symbols(old_scope->symbols);
     free(old_scope);
 }
 
@@ -360,7 +370,7 @@ symbol_t *create_symbol(const char *name, symbol_type_t sym_type, type_info_t ty
     sym->name = string_duplicate(name);
     sym->llvm_name = NULL; // Will be set when added to table
     sym->sym_type = sym_type;
-    sym->type_info = type_info;
+    sym->type_info = deep_copy_type_info(&type_info); // Make a deep copy
     
     // Initialize all fields
     sym->scope_level = 0;
@@ -438,8 +448,8 @@ symbol_t *add_symbol(symbol_table_t *table, const char *name, symbol_type_t sym_
     
     // Calculate size and alignment for variables
     if (sym_type == SYM_VARIABLE) {
-        sym->size = calculate_type_size(&type_info, table);
-        sym->alignment = calculate_type_alignment(&type_info, table);
+        sym->size = calculate_type_size(&sym->type_info, table);
+        sym->alignment = calculate_type_alignment(&sym->type_info, table);
     }
     
     // Add to current scope
@@ -532,6 +542,7 @@ symbol_t *add_enum_constant(symbol_table_t *table, const char *name, int value) 
         sym->size = INT_SIZE;
         sym->alignment = INT_ALIGN;
     }
+    free_type_info(&enum_type); // Clean up the temporary type_info
     return sym;
 }
 
@@ -557,6 +568,7 @@ symbol_t *add_label(symbol_table_t *table, const char *label_name) {
         sym->label_name = string_duplicate(label_name);
         sym->label_defined = 1;
     }
+    free_type_info(&void_type); // Clean up the temporary type_info
     return sym;
 }
 
@@ -590,6 +602,7 @@ int is_compatible_type(type_info_t *type1, type_info_t *type2) {
     if (type1->is_array != type2->is_array) return 0;
     
     // Check base type
+    if (!type1->base_type || !type2->base_type) return 0;
     if (strcmp(type1->base_type, type2->base_type) != 0) return 0;
     
     // Check struct/union/enum flags
@@ -600,7 +613,7 @@ int is_compatible_type(type_info_t *type1, type_info_t *type2) {
     return 1;
 }
 
-// Get expression type (simplified version)
+// Get expression type (returns a deep copy that must be freed)
 type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table) {
     type_info_t default_type = create_type_info(string_duplicate("int"), 0, 0, NULL);
     
@@ -608,18 +621,22 @@ type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table) {
     
     switch (expr->type) {
         case AST_NUMBER:
+            free_type_info(&default_type);
             return create_type_info(string_duplicate("int"), 0, 0, NULL);
             
         case AST_CHARACTER:
+            free_type_info(&default_type);
             return create_type_info(string_duplicate("char"), 0, 0, NULL);
             
         case AST_STRING_LITERAL:
+            free_type_info(&default_type);
             return create_type_info(string_duplicate("char"), 1, 0, NULL); // char*
             
         case AST_IDENTIFIER: {
             symbol_t *sym = find_symbol(table, expr->data.identifier.name);
             if (sym) {
-                return sym->type_info;
+                free_type_info(&default_type);
+                return deep_copy_type_info(&sym->type_info);
             }
             break;
         }
@@ -627,19 +644,25 @@ type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table) {
         case AST_BINARY_OP:
             // Most binary ops return int, comparisons return bool
             if (expr->data.binary_op.op >= OP_EQ && expr->data.binary_op.op <= OP_GE) {
+                free_type_info(&default_type);
                 return create_type_info(string_duplicate("_Bool"), 0, 0, NULL);
             }
             return default_type;
             
         case AST_UNARY_OP:
             if (expr->data.unary_op.op == OP_NOT) {
+                free_type_info(&default_type);
                 return create_type_info(string_duplicate("_Bool"), 0, 0, NULL);
+            } else {
+                type_info_t operand_type = get_expression_type(expr->data.unary_op.operand, table);
+                free_type_info(&default_type);
+                return operand_type;
             }
-            return get_expression_type(expr->data.unary_op.operand, table);
             
         case AST_ADDRESS_OF: {
             type_info_t operand_type = get_expression_type(expr->data.address_of.operand, table);
             operand_type.pointer_level++;
+            free_type_info(&default_type);
             return operand_type;
         }
         
@@ -648,6 +671,7 @@ type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table) {
             if (operand_type.pointer_level > 0) {
                 operand_type.pointer_level--;
             }
+            free_type_info(&default_type);
             return operand_type;
         }
         
@@ -656,6 +680,13 @@ type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table) {
     }
     
     return default_type;
+}
+
+// Clean up type_info in a symbol
+void cleanup_symbol_type_info(symbol_t *sym) {
+    if (sym) {
+        free_type_info(&sym->type_info);
+    }
 }
 
 // Debug functions
@@ -679,7 +710,7 @@ void print_symbol(symbol_t *sym, int indent) {
     
     switch (sym->sym_type) {
         case SYM_VARIABLE:
-            printf("variable, type=%s", sym->type_info.base_type);
+            printf("variable, type=%s", sym->type_info.base_type ? sym->type_info.base_type : "null");
             if (sym->type_info.pointer_level > 0) {
                 for (int i = 0; i < sym->type_info.pointer_level; i++) {
                     printf("*");
@@ -689,7 +720,7 @@ void print_symbol(symbol_t *sym, int indent) {
             break;
             
         case SYM_FUNCTION:
-            printf("function, returns %s", sym->type_info.base_type);
+            printf("function, returns %s", sym->type_info.base_type ? sym->type_info.base_type : "null");
             break;
             
         case SYM_STRUCT:

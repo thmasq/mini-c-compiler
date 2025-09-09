@@ -19,6 +19,7 @@ symbol_table_t *global_symbol_table = NULL;
 // Error recovery globals
 int error_count = 0;
 int max_errors = 20;
+
 // Portable string duplication function
 static char *string_duplicate(const char *str) {
     if (!str) return NULL;
@@ -32,7 +33,7 @@ static char *string_duplicate(const char *str) {
     return copy;
 }
 
-// Deep copy function for type_info_t
+// Deep copy function for type_info_t with proper memory management
 static type_info_t deep_copy_type_info(const type_info_t *src) {
     type_info_t result;
     result.base_type = src->base_type ? string_duplicate(src->base_type) : NULL;
@@ -46,14 +47,14 @@ static type_info_t deep_copy_type_info(const type_info_t *src) {
     result.is_incomplete = src->is_incomplete;
     result.storage_class = src->storage_class;
     result.qualifiers = src->qualifiers;
-    result.array_size = NULL;
-    result.param_types = NULL;
+    result.array_size = NULL; // Don't copy AST nodes - they're managed separately
+    result.param_types = NULL; // Don't copy param arrays - they're managed separately
     result.param_count = src->param_count;
     result.is_variadic = src->is_variadic;
     return result;
 }
 
-// Helper to merge declaration specifiers and declarator
+// Helper to merge declaration specifiers and declarator with proper cleanup
 static type_info_t make_complete_type(type_info_t base_type, declarator_t decl) {
     type_info_t result = deep_copy_type_info(&base_type);
     result.pointer_level = decl.pointer_level;
@@ -95,10 +96,19 @@ static void calculate_and_store_sizes(ast_node_t *node) {
                 // Calculate size from expression type
                 type_info_t expr_type = get_expression_type(node->data.sizeof_op.operand, global_symbol_table);
                 node->data.sizeof_op.size_value = calculate_type_size(&expr_type, global_symbol_table);
+                free_type_info(&expr_type);
             }
             break;
         default:
             break;
+    }
+}
+
+// Safe cleanup for type_info_t
+static void cleanup_type_info(type_info_t *type_info) {
+    if (type_info && type_info->base_type) {
+        free(type_info->base_type);
+        type_info->base_type = NULL;
     }
 }
 %}
@@ -241,7 +251,8 @@ function_definition
     : declaration_specifiers declarator declaration_list compound_statement {
         type_info_t func_type = make_complete_type($1, $2);
         $$ = create_function(string_duplicate($2.name), func_type, NULL, 0, $4);
-        free_type_info(&$1);
+        cleanup_type_info(&$1);
+        // func_type is now owned by the function node
     }
     | declaration_specifiers declarator compound_statement {
         type_info_t func_type = make_complete_type($1, $2);
@@ -254,7 +265,8 @@ function_definition
         }
 
         $$ = create_function(string_duplicate($2.name), func_type, params, param_count, $3);
-        free_type_info(&$1);
+        cleanup_type_info(&$1);
+        // func_type is now owned by the function node
     }
     ;
 
@@ -280,7 +292,7 @@ declaration_specifiers
         $$ = $1;
         if ($2.storage_class != STORAGE_NONE) $$.storage_class = $2.storage_class;
         $$.qualifiers |= $2.qualifiers;
-        free_type_info(&$2);
+        cleanup_type_info(&$2);
     }
     | type_qualifier {
         $$ = create_type_info(string_duplicate("int"), 0, 0, NULL);
@@ -307,10 +319,12 @@ init_declarator
     : declarator {
         type_info_t dummy_type = create_type_info(string_duplicate("int"), 0, 0, NULL);
         $$ = create_declaration(dummy_type, string_duplicate($1.name), NULL);
+        // dummy_type is now owned by the declaration
     }
     | declarator ASSIGN initializer {
         type_info_t dummy_type = create_type_info(string_duplicate("int"), 0, 0, NULL);
         $$ = create_declaration(dummy_type, string_duplicate($1.name), $3);
+        // dummy_type is now owned by the declaration
     }
     ;
 
@@ -337,7 +351,10 @@ type_specifier
     | IMAGINARY { $$ = create_type_info(string_duplicate("_Imaginary"), 0, 0, NULL); }
     | struct_or_union_specifier { $$ = $1; }
     | enum_specifier { $$ = $1; }
-    | TYPE_NAME { $$ = create_type_info(string_duplicate($1), 0, 0, NULL); }
+    | TYPE_NAME { 
+        $$ = create_type_info(string_duplicate($1), 0, 0, NULL); 
+        free($1);
+    }
     ;
 
 struct_or_union_specifier
@@ -346,6 +363,7 @@ struct_or_union_specifier
         $$.is_struct = (strcmp($1, "struct") == 0);
         $$.is_union = (strcmp($1, "union") == 0);
         free($1);
+        free($2);
     }
     | struct_or_union LBRACE struct_declaration_list RBRACE {
         $$ = create_type_info(string_duplicate("anonymous"), 0, 0, NULL);
@@ -359,6 +377,7 @@ struct_or_union_specifier
         $$.is_union = (strcmp($1, "union") == 0);
         $$.is_incomplete = 1;
         free($1);
+        free($2);
     }
     ;
 
@@ -389,7 +408,7 @@ struct_declaration
             $$.nodes[i] = create_declaration(member_type, string_duplicate(member->name), NULL);
         }
         free($2.members);
-        free_type_info(&$1);
+        cleanup_type_info(&$1);
     }
     ;
 
@@ -397,7 +416,7 @@ specifier_qualifier_list
     : type_specifier specifier_qualifier_list {
         $$ = $1;
         $$.qualifiers |= $2.qualifiers;
-        free_type_info(&$2);
+        cleanup_type_info(&$2);
     }
     | type_specifier { $$ = $1; }
     | type_qualifier specifier_qualifier_list {
@@ -452,6 +471,7 @@ enum_specifier
     | ENUM IDENTIFIER LBRACE enumerator_list RBRACE {
         $$ = create_type_info(string_duplicate($2), 0, 0, NULL);
         $$.is_enum = 1;
+        free($2);
     }
     | ENUM LBRACE enumerator_list COMMA RBRACE {
         $$ = create_type_info(string_duplicate("enum"), 0, 0, NULL);
@@ -460,11 +480,13 @@ enum_specifier
     | ENUM IDENTIFIER LBRACE enumerator_list COMMA RBRACE {
         $$ = create_type_info(string_duplicate($2), 0, 0, NULL);
         $$.is_enum = 1;
+        free($2);
     }
     | ENUM IDENTIFIER {
         $$ = create_type_info(string_duplicate($2), 0, 0, NULL);
         $$.is_enum = 1;
         $$.is_incomplete = 1;
+        free($2);
     }
     ;
 
@@ -491,12 +513,14 @@ enumerator
 enumerator_item
     : IDENTIFIER {
         $$ = create_enum_value(string_duplicate($1), 0);
+        free($1);
     }
     | IDENTIFIER ASSIGN constant_expression {
         int value = ($3->type == AST_NUMBER) ?
         $3->data.number.value : 0;
         $$ = create_enum_value(string_duplicate($1), value);
         $$->value_expr = $3;
+        free($1);
     }
     ;
 
@@ -522,6 +546,7 @@ declarator
 direct_declarator
     : IDENTIFIER {
         $$ = make_declarator(string_duplicate($1), 0, 0, NULL);
+        free($1);
     }
     | LPAREN declarator RPAREN {
         $$ = $2;
@@ -627,22 +652,26 @@ parameter_declaration
     : declaration_specifiers declarator {
         type_info_t param_type = make_complete_type($1, $2);
         $$ = create_parameter(param_type, string_duplicate($2.name));
-        free_type_info(&$1);
+        cleanup_type_info(&$1);
     }
     | declaration_specifiers abstract_declarator {
-        type_info_t param_type = $1;
+        type_info_t param_type = deep_copy_type_info(&$1);
         $$ = create_parameter(param_type, string_duplicate(""));
-        free_type_info(&$1);
+        cleanup_type_info(&$1);
     }
     | declaration_specifiers {
-        $$ = create_parameter($1, string_duplicate(""));
-        free_type_info(&$1);
+        type_info_t param_type = deep_copy_type_info(&$1);
+        $$ = create_parameter(param_type, string_duplicate(""));
+        cleanup_type_info(&$1);
     }
     ;
 
 type_name
     : specifier_qualifier_list { $$ = $1; }
-    | specifier_qualifier_list abstract_declarator { $$ = $1; }
+    | specifier_qualifier_list abstract_declarator { 
+        $$ = $1; 
+        // Apply abstract declarator modifications here if needed
+    }
     ;
 
 abstract_declarator
@@ -680,6 +709,7 @@ statement
 labeled_statement
     : IDENTIFIER COLON statement {
         $$ = create_label_stmt(string_duplicate($1), $3);
+        free($1);
     }
     | CASE constant_expression COLON statement {
         $$ = create_case_stmt($2, $4);
@@ -771,6 +801,7 @@ iteration_statement
 jump_statement
     : GOTO IDENTIFIER SEMICOLON {
         $$ = create_goto_stmt(string_duplicate($2));
+        free($2);
     }
     | CONTINUE SEMICOLON {
         $$ = create_continue_stmt();
@@ -790,6 +821,7 @@ jump_statement
 primary_expression
     : IDENTIFIER {
         $$ = create_identifier(string_duplicate($1));
+        free($1);
     }
     | CONSTANT {
         $$ = create_number($1);
@@ -799,6 +831,7 @@ primary_expression
     }
     | STRING_LITERAL {
         $$ = create_string_literal(string_duplicate($1));
+        free($1);
     }
     | LPAREN expression RPAREN {
         $$ = $2;
@@ -826,9 +859,11 @@ postfix_expression
     }
     | postfix_expression DOT IDENTIFIER {
         $$ = create_member_access($1, string_duplicate($3));
+        free($3);
     }
     | postfix_expression PTR_OP IDENTIFIER {
         $$ = create_ptr_member_access($1, string_duplicate($3));
+        free($3);
     }
     | postfix_expression INC_OP {
         $$ = create_unary_op(OP_POSTINC, $1);
@@ -838,9 +873,11 @@ postfix_expression
     }
     | LPAREN type_name RPAREN LBRACE initializer_list RBRACE {
         $$ = create_cast($2, $5);
+        cleanup_type_info(&$2);
     }
     | LPAREN type_name RPAREN LBRACE initializer_list COMMA RBRACE {
         $$ = create_cast($2, $5);
+        cleanup_type_info(&$2);
     }
     ;
 
@@ -891,6 +928,7 @@ unary_expression
     | SIZEOF LPAREN type_name RPAREN {
         $$ = create_sizeof_type($3);
         calculate_and_store_sizes($$);
+        cleanup_type_info(&$3);
     }
     ;
 
@@ -898,6 +936,7 @@ cast_expression
     : unary_expression { $$ = $1; }
     | LPAREN type_name RPAREN cast_expression {
         $$ = create_cast($2, $4);
+        cleanup_type_info(&$2);
     }
     ;
 
@@ -1088,19 +1127,27 @@ designator_list
 
 designator
     : LBRACKET constant_expression RBRACKET { $$ = NULL; }
-    | DOT IDENTIFIER { $$ = NULL; }
+    | DOT IDENTIFIER { 
+        $$ = NULL; 
+        free($2);
+    }
     ;
 
 /* Top-level declaration handling */
 declaration
     : declaration_specifiers SEMICOLON {
         $$ = NULL;
-        // Empty declaration
+        // Clean up the unused type_info
+        cleanup_type_info(&$1);
     }
     | declaration_specifiers init_declarator_list SEMICOLON {
         $$ = $2;
         if ($$) {
+            // Update the declaration with the proper type
             $$->data.declaration.type_info = $1;
+            // The type_info is now owned by the declaration node
+        } else {
+            cleanup_type_info(&$1);
         }
     }
     ;

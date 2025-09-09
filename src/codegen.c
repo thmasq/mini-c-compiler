@@ -47,6 +47,26 @@ static char *string_duplicate(const char *str) {
     return copy;
 }
 
+static type_info_t deep_copy_type_info_codegen(const type_info_t *src) {
+    type_info_t result;
+    result.base_type = src->base_type ? string_duplicate(src->base_type) : NULL;
+    result.pointer_level = src->pointer_level;
+    result.is_array = src->is_array;
+    result.is_vla = src->is_vla;
+    result.is_function = src->is_function;
+    result.is_struct = src->is_struct;
+    result.is_union = src->is_union;
+    result.is_enum = src->is_enum;
+    result.is_incomplete = src->is_incomplete;
+    result.storage_class = src->storage_class;
+    result.qualifiers = src->qualifiers;
+    result.array_size = NULL; // Don't copy AST nodes - they're managed separately
+    result.param_types = NULL; // Don't copy param arrays - they're managed separately
+    result.param_count = src->param_count;
+    result.is_variadic = src->is_variadic;
+    return result;
+}
+
 // Helper functions
 static int get_next_temp() {
     return ++ctx.temp_counter;
@@ -1822,8 +1842,13 @@ static void generate_compound_statement(ast_node_t *node) {
 
 // Generate function
 static void generate_function(ast_node_t *node) {
-    ctx.current_function_name = node->data.function.name;
-    ctx.current_function_return_type = node->data.function.return_type;
+    // Make deep copies for context to avoid double-free
+    free(ctx.current_function_name); // Free previous if any
+    ctx.current_function_name = string_duplicate(node->data.function.name);
+    
+    free_type_info(&ctx.current_function_return_type); // Free previous if any
+    ctx.current_function_return_type = deep_copy_type_info_codegen(&node->data.function.return_type);
+    
     ctx.in_return_block = 0;
     
     // Add function to symbol table

@@ -120,6 +120,10 @@ char *generate_unique_name(symbol_table_t *table, const char *base_name);
 int is_compatible_type(type_info_t *type1, type_info_t *type2);
 type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table);
 
+// Memory management helpers
+void free_symbol(symbol_t *sym);
+void cleanup_symbol_type_info(symbol_t *sym);
+
 // Debug functions
 void print_symbol_table(symbol_table_t *table);
 void print_symbol(symbol_t *sym, int indent);

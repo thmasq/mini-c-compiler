@@ -628,6 +628,8 @@ int can_convert_to(type_info_t *from, type_info_t *to) {
 
 // Memory management functions
 void free_type_info(type_info_t *type_info) {
+    if (!type_info) return;
+    
     if (type_info->base_type) {
         free(type_info->base_type);
         type_info->base_type = NULL;
@@ -639,7 +641,9 @@ void free_type_info(type_info_t *type_info) {
         free(type_info->param_types);
         type_info->param_types = NULL;
     }
-    type_info->array_size = NULL; // Don't free - it's managed elsewhere
+    type_info->param_count = 0;
+    // Don't free array_size - it's managed by AST
+    type_info->array_size = NULL;
 }
 
 void free_member_info(member_info_t *member) {
