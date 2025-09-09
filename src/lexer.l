@@ -95,8 +95,6 @@ char *process_string_literal(const char *text) {
 %}
 
 %option noyywrap
-%option nounput
-%option noinput
 
 /* Definitions for common patterns */
 D               [0-9]
@@ -131,7 +129,7 @@ IS              ((u|U)|(u|U)?(l|L|ll|LL)|(l|L|ll|LL)(u|U))
 
 "//".*$                 { /* Single-line comment */ }
 
-/* Keywords */
+; /* Keywords */
 "auto"                  { count_chars(); return AUTO; }
 "_Bool"                 { count_chars(); return BOOL; }
 "break"                 { count_chars(); return BREAK; }
@@ -170,13 +168,13 @@ IS              ((u|U)|(u|U)?(l|L|ll|LL)|(l|L|ll|LL)(u|U))
 "volatile"              { count_chars(); return VOLATILE; }
 "while"                 { count_chars(); return WHILE; }
 
-/* Identifiers */
+; /* Identifiers */
 {L}({L}|{D})*           { count_chars(); 
                           yylval.string = string_duplicate(yytext); 
                           return IDENTIFIER; 
                         }
 
-/* Integer constants */
+; /* Integer constants */
 0[xX]{H}+{IS}?          { count_chars(); 
                           yylval.number = (int)strtol(yytext, NULL, 16); 
                           return CONSTANT; 
@@ -190,13 +188,13 @@ IS              ((u|U)|(u|U)?(l|L|ll|LL)|(l|L|ll|LL)(u|U))
                           return CONSTANT; 
                         }
 
-/* Character constants */
+; /* Character constants */
 L?'(\\.|[^\\'\n])+'     { count_chars(); 
                           yylval.character = process_char_literal(yytext); 
                           return CONSTANT; 
                         }
 
-/* Floating point constants */
+; /* Floating point constants */
 {D}+{E}{FS}?            { count_chars(); 
                           yylval.number = (int)atof(yytext); 
                           return CONSTANT; 
@@ -222,13 +220,13 @@ L?'(\\.|[^\\'\n])+'     { count_chars();
                           return CONSTANT; 
                         }
 
-/* String literals */
+; /* String literals */
 L?\"(\\.|[^\\"\n])*\"   { count_chars(); 
                           yylval.string = process_string_literal(yytext); 
                           return STRING_LITERAL; 
                         }
 
-/* Multi-character operators */
+; /* Multi-character operators */
 "..."                   { count_chars(); return ELLIPSIS; }
 ">>="                   { count_chars(); return RIGHT_ASSIGN; }
 "<<="                   { count_chars(); return LEFT_ASSIGN; }
@@ -252,7 +250,7 @@ L?\"(\\.|[^\\"\n])*\"   { count_chars();
 "=="                    { count_chars(); return EQ_OP; }
 "!="                    { count_chars(); return NE_OP; }
 
-/* Single character tokens */
+; /* Single character tokens */
 ";"                     { count_chars(); return SEMICOLON; }
 ("{"|"<%")              { count_chars(); return LBRACE; }
 ("}"|"%>")              { count_chars(); return RBRACE; }
@@ -278,11 +276,11 @@ L?\"(\\.|[^\\"\n])*\"   { count_chars();
 "|"                     { count_chars(); return PIPE; }
 "?"                     { count_chars(); return QUESTION; }
 
-/* Whitespace */
+; /* Whitespace */
 [ \t\v\f]               { count_chars(); }
 \n                      { line_number++; column = 0; }
 
-/* Catch-all for unrecognized characters */
+; /* Catch-all for unrecognized characters */
 .                       { 
                           fprintf(stderr, "Unexpected character '%c' at line %d, column %d\n", 
                                   yytext[0], line_number, column); 
