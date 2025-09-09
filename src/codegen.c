@@ -335,7 +335,8 @@ static int generate_expression(ast_node_t *node) {
                 int left = generate_expression(node->data.binary_op.left);
                 int left_bool;
                 
-                if (is_comparison_op(node->data.binary_op.left->data.binary_op.op)) {
+                if (node->data.binary_op.left->type == AST_BINARY_OP && 
+                    is_comparison_op(node->data.binary_op.left->data.binary_op.op)) {
                     left_bool = left;
                 } else {
                     left_bool = get_next_temp();
@@ -370,7 +371,8 @@ static int generate_expression(ast_node_t *node) {
                 int right = generate_expression(node->data.binary_op.right);
                 int right_bool;
                 
-                if (is_comparison_op(node->data.binary_op.right->data.binary_op.op)) {
+                if (node->data.binary_op.right->type == AST_BINARY_OP && 
+                    is_comparison_op(node->data.binary_op.right->data.binary_op.op)) {
                     right_bool = right;
                 } else {
                     right_bool = get_next_temp();
@@ -553,7 +555,8 @@ static int generate_expression(ast_node_t *node) {
             int cond = generate_expression(node->data.conditional.condition);
             int bool_temp;
             
-            if (is_comparison_op(node->data.conditional.condition->data.binary_op.op)) {
+            if (node->data.conditional.condition->type == AST_BINARY_OP &&
+                is_comparison_op(node->data.conditional.condition->data.binary_op.op)) {
                 bool_temp = cond;
             } else {
                 bool_temp = get_next_temp();
@@ -615,14 +618,15 @@ static int generate_expression(ast_node_t *node) {
             int operand = generate_expression(node->data.cast.expression);
             int temp = get_next_temp();
             
-            char *source_type = get_expression_result_type(node->data.cast.expression, ctx.symbol_table);
-            char *target_type = get_llvm_type_string(&node->data.cast.target_type);
+            type_info_t source_type = get_expression_type(node->data.cast.expression, ctx.symbol_table);
+            char *source_type_str = get_llvm_type_string(&source_type);
+            char *target_type_str = get_llvm_type_string(&node->data.cast.target_type);
             
             // Handle different cast types
-            if (strcmp(source_type, target_type) == 0) {
+            if (strcmp(source_type_str, target_type_str) == 0) {
                 // No cast needed
-                free(source_type);
-                free(target_type);
+                free(source_type_str);
+                free(target_type_str);
                 return operand;
             }
             
@@ -635,18 +639,18 @@ static int generate_expression(ast_node_t *node) {
             }
             
             // Simple casting - extend for more complex cases
-            if (strcmp(target_type, "i32") == 0 && strcmp(source_type, "i8") == 0) {
+            if (strcmp(target_type_str, "i32") == 0 && strcmp(source_type_str, "i8") == 0) {
                 fprintf(ctx.output, "  %%t%d = sext i8 %s to i32\n", temp, operand_str);
-            } else if (strcmp(target_type, "i8") == 0 && strcmp(source_type, "i32") == 0) {
+            } else if (strcmp(target_type_str, "i8") == 0 && strcmp(source_type_str, "i32") == 0) {
                 fprintf(ctx.output, "  %%t%d = trunc i32 %s to i8\n", temp, operand_str);
             } else {
                 // Default bitcast
                 fprintf(ctx.output, "  %%t%d = bitcast %s %s to %s\n", 
-                        temp, source_type, operand_str, target_type);
+                        temp, source_type_str, operand_str, target_type_str);
             }
             
-            free(source_type);
-            free(target_type);
+            free(source_type_str);
+            free(target_type_str);
             return temp;
         }
         
@@ -1115,7 +1119,8 @@ static void generate_statement(ast_node_t *node) {
             int cond = generate_expression(node->data.if_stmt.condition);
             int bool_temp;
             
-            if (is_comparison_op(node->data.if_stmt.condition->data.binary_op.op)) {
+            if (node->data.if_stmt.condition->type == AST_BINARY_OP &&
+                is_comparison_op(node->data.if_stmt.condition->data.binary_op.op)) {
                 bool_temp = cond;
             } else {
                 bool_temp = get_next_temp();
@@ -1187,7 +1192,8 @@ static void generate_statement(ast_node_t *node) {
             int cond = generate_expression(node->data.while_stmt.condition);
             int bool_temp;
             
-            if (is_comparison_op(node->data.while_stmt.condition->data.binary_op.op)) {
+            if (node->data.while_stmt.condition->type == AST_BINARY_OP &&
+                is_comparison_op(node->data.while_stmt.condition->data.binary_op.op)) {
                 bool_temp = cond;
             } else {
                 bool_temp = get_next_temp();
@@ -1260,7 +1266,8 @@ static void generate_statement(ast_node_t *node) {
                 int cond = generate_expression(node->data.for_stmt.condition);
                 int bool_temp;
                 
-                if (is_comparison_op(node->data.for_stmt.condition->data.binary_op.op)) {
+                if (node->data.for_stmt.condition->type == AST_BINARY_OP &&
+                    is_comparison_op(node->data.for_stmt.condition->data.binary_op.op)) {
                     bool_temp = cond;
                 } else {
                     bool_temp = get_next_temp();
@@ -1342,7 +1349,8 @@ static void generate_statement(ast_node_t *node) {
             int cond = generate_expression(node->data.do_while_stmt.condition);
             int bool_temp;
             
-            if (is_comparison_op(node->data.do_while_stmt.condition->data.binary_op.op)) {
+            if (node->data.do_while_stmt.condition->type == AST_BINARY_OP &&
+                is_comparison_op(node->data.do_while_stmt.condition->data.binary_op.op)) {
                 bool_temp = cond;
             } else {
                 bool_temp = get_next_temp();

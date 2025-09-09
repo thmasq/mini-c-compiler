@@ -157,7 +157,7 @@ static void calculate_and_store_sizes(ast_node_t *node) {
 
 /* Non-terminals */
 %type <node> translation_unit external_declaration function_definition
-%type <node> declaration init_declarator_list init_declarator initializer
+%type <node> declaration declaration_list init_declarator_list init_declarator initializer
 %type <node> statement labeled_statement compound_statement expression_statement
 %type <node> selection_statement iteration_statement jump_statement
 %type <node> primary_expression postfix_expression unary_expression cast_expression
