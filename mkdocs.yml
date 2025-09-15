@@ -1,0 +1,10 @@
+site_name: Compilador Mini C
+theme:
+  name: material
+nav:
+  - Início: index.md
+  - Definição do Projeto: project-definition.md
+  - Estrutura do Projeto: project-structure.md
+  - Decisões Técnicas: technical-decisions.md
+  - Planejamento de Sprints: sprint-planning.md
+  - Problemas e Soluções: problems-and-solutions.md
