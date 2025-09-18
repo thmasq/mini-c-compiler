@@ -1,6 +1,6 @@
 # Planejamento de Sprints
 
-Adotaremos um fluxo inspirado em Scrum: em cada Sprint Planning definimos metas e tarefas para a próxima sprint; fazemos acompanhamentos rápidos para destravar impedimentos; e encerramos cada sprint com review/retrospectiva para mostrar o que foi concluído e oque se espera para próxima.
+Adotaremos um fluxo inspirado em Scrum: em cada Sprint Planning definimos metas e tarefas para a próxima sprint; fazemos acompanhamentos rápidos para destravar impedimentos; e encerramos cada sprint com review/retrospectiva para mostrar o que foi concluído e o que se espera para próxima.
 
 
 ??? abstract "Sprint NN — DD-MM-AAA"
