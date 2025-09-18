@@ -9,3 +9,4 @@ Esta documentação está organizada nas seguintes seções:
 *   [Decisões Técnicas](technical-decisions.md)
 *   [Planejamento de Sprints](sprint-planning.md)
 *   [Problemas Encontrados e Soluções Adotadas](problems-and-solutions.md)
+*   [Metodologia escolhida](chosen-methodology.md)
