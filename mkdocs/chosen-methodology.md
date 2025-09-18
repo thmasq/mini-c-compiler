@@ -2,13 +2,19 @@
 
 A metodologia **Scrum** é uma estrutura ágil para o desenvolvimento de produtos complexos, ideal para projetos que exigem flexibilidade, colaboração e entregas incrementais. Para o desenvolvimento de um compilador de C para LLVM, o Scrum oferece uma abordagem robusta e adaptável, justificando sua escolha por diversas razões-chave.
 
+---
+
 ## Desenvolvimento iterativo e feedback contínuo
 
-O desenvolvimento de um compilador é uma tarefa complexa, composta por diversas fases interligadas, como análise léxica, sintática, semântica, otimização e geração de código. A abordagem iterativa do Scrum, com suas **Sprints** curtas e focadas, permite que a equipe construa o compilador em pedaços pequenos e funcionais. Por exemplo, uma Sprint inicial pode focar apenas na análise léxica e sintática de um subconjunto simples da linguagem C. Ao final de cada Sprint, a equipe realiza uma **Sprint Review**, onde as funcionalidades implementadas são demonstradas e o feedback dos usuários é coletado. Esse ciclo de feedback contínuo garante que o compilador esteja sempre alinhado com o esperado e que problemas de implementação sejam identificados e corrigidos de maneira precoce, evitando retrabalho e desvios de rota.
+O desenvolvimento de um compilador é uma tarefa complexa, composta por diversas fases interligadas, como análise léxica, sintática, semântica, otimização e geração de código. A abordagem iterativa do Scrum, com suas **Sprints** curtas e focadas, permite que a equipe construa o compilador em pedaços pequenos e funcionais. Por exemplo, uma Sprint inicial pode focar apenas na análise léxica e sintática de um subconjunto simples da linguagem C. Ao final de cada Sprint, a equipe realiza uma **Sprint Review**, onde as funcionalidades implementadas são demonstradas. Esse ciclo de feedback contínuo garante que o compilador esteja sempre alinhado com o esperado e que problemas de implementação sejam identificados e corrigidos de maneira precoce, evitando retrabalho e desvios de rota.
+
+---
 
 ## Gerenciamento de Complexidade e Riscos
 
-A construção de um compilador é inerentemente arriscada, com desafios como a garantia de conformidade com o padrão C, a otimização de código gerado e a integração com a estrutura da LLVM. Mesmo sem seguir a metodologia Scrum à risca, a equipe pode aproveitar seus princípios. A priorização do trabalho mais importante no Product Backlog ajuda a mitigar esses riscos, dividindo o projeto em partes gerenciáveis. O líder da equipe atua de forma a facilitar a remoção de impedimentos, garantindo que o time se concentre em seu trabalho sem interrupções. Além disso, a transparência e a colaboração são promovidas por meio de uma reunião a cada sprint, permitindo que a equipe identifique e resolva rapidamente quaisquer problemas ou dependências que possam surgir, mantendo o projeto no caminho certo.
+A construção de um compilador é inerentemente arriscada, com desafios como a garantia de conformidade com o padrão C, a otimização de código gerado e a integração com a estrutura da LLVM. Mesmo sem seguir a metodologia Scrum à risca, a equipe pode aproveitar seus princípios. A priorização do trabalho mais importante do projeto ajuda a mitigar esses riscos, dividindo-o em partes gerenciáveis. O **líder da equipe e o revisor de código** atuam de forma a facilitar a remoção de impedimentos, garantindo que o time se concentre em seu trabalho sem interrupções. Além disso, a transparência e a colaboração são promovidas por meio de uma reunião a cada sprint, permitindo que a equipe identifique e resolva rapidamente quaisquer problemas ou dependências que possam surgir, mantendo o projeto no caminho certo.
+
+---
 
 ## Flexibilidade e Adaptabilidade
 
