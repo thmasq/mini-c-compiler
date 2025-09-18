@@ -13,7 +13,7 @@ Adotaremos um fluxo inspirado em Scrum: em cada Sprint Planning definimos metas 
     **Objetivo da Sprint**: Planejar e distribuir o trabalho inicial (Pages/MkDocs publicado, estrutura do repositório definida e páginas base da documentação criadas).
 
     **Tarefas da sprint**:
-    
+
     | ID   | Tarefa                                           | Responsável         | Status                   |
     |------|--------------------------------------------------|---------------------|--------------------------|
     | T-01 | GitHub Pages (MkDocs)                            | Caio                | ⏳ TODO · 📌 DEFINED     |
@@ -85,4 +85,41 @@ Adotaremos um fluxo inspirado em Scrum: em cada Sprint Planning definimos metas 
     **Resultados da Sprint (Review)**
     - Entregas concluídas: *(preencher na review de 23/09)*  
     - Itens para a próxima sprint: Entender o que já está implementado e dividir o que cada um pode contribuir
+     
+??? abstract "Sprint 03 — 24-09-2025 - 29-09-2025"
+
+    **Presentes:** Caio, Eduardo, João Felipe, Renata e Thomas 
+
+    **Início:** 24-09-2025
+    **Fim:** 29-09-2025
+
+    **Objetivo da Sprint**: Finalizar a parte do compilador que envolve a análise léxica, semântica, sintática, semântica, assim como implementar tabela de símbolos para a entrega da P1 ao professor.
+
+    **Tarefas da sprint**:
+
+    | ID   | Tarefa                                           | Responsável         | Status                   |
+    |------|--------------------------------------------------|---------------------|--------------------------|
+    | T-01 | Refinar estruturas existentes                            | TODOS               | ⏳ TODO · 📌 DEFINED     |
+    | T-02 | Atualizar documentação do MKDocs (Github Pages)                             | TODOS               | ⏳ TODO · 📌 DEFINED     |
+    | T-03 | Placeholder                            | TODOS               | ⏳ TODO · 📌 DEFINED     |
+
+    **Legenda de status:**  
+
+    - 📌 DEFINED — definido nesta sprint 
+    - ✅ DONE - concluída 
+    - 🚧 DOING - em andamento 
+    - ⏳ TODO - planejada, mas não começou 
+    - ⛔ BLOCKED - impedido (impedimento registrado abaixo) 
+
+    **Impedimentos**
+    - —  
+
+    **Diário**:
+
+    -
+    -
+
+    **Resultados da Sprint (Review)**
+    -
+    -
      
