@@ -1,44 +1,9 @@
 # Planejamento de Sprints
 
-Adotaremos um fluxo inspirado em Scrum: em cada Sprint Planning definimos metas e tarefas para a próxima sprint; fazemos acompanhamentos rápidos para destravar impedimentos; e encerramos cada sprint com review/retrospectiva para mostrar o que foi concluído e o que se espera para próxima.
+Adotaremos um fluxo inspirado em Scrum: em cada Sprint Planning definimos metas e tarefas para a próxima sprint; fazemos acompanhamentos rápidos para destravar impedimentos e encerramos cada sprint com a sprint review para mostrar o que foi concluído e o que é esperado para a próxima sprint.
 
 
-??? abstract "Sprint NN — DD-MM-AAA"
-
-    **Presentes:** Caio, Eduardo, João Felipe, Renata e Thomas 
-
-    **Início:** DD-MM-AAAA
-
-    **Fim:** DD-MM-AAAA
-
-    **Objetivo da Sprint**: Frase curta e mensurável do resultado esperado.
-
-    ### Tarefas da Sprint
-    | ID | Tarefa | Responsável | Status | 
-    |----|--------|-------------|--------|
-    | T-01 | Descrição objetiva | Nome | TODO/DOING/DONE/BLOCKED |
-    | T-02 | … | … | … |
-
-    **Legenda de status:**  
-
-    - 📌 DEFINED — definido nesta sprint 
-    - ✅ DONE - concluída 
-    - 🚧 DOING - em andamento 
-    - ⏳ TODO - planejada, mas não começou 
-    - ⛔ BLOCKED - impedido (impedimento registrado abaixo) 
-
-    **Impedimentos**
-    - ⛔ Descrição do Impedimento, se houver. 
-
-    **Diário**
-    - Notas rápidas / alinhamentos 
-
-    **Resultados da Sprint (Review)**
-
-    - Entregas concluídas:
-    - Itens para a próxima sprint:
-
-??? abstract "Sprint 01 — 12-09-2025"
+??? abstract "Sprint 01 — 12-09-2025 - 16-09-2025"
 
     **Presentes:** Caio, Eduardo, João Felipe, Renata e Thomas 
 
@@ -47,7 +12,8 @@ Adotaremos um fluxo inspirado em Scrum: em cada Sprint Planning definimos metas 
 
     **Objetivo da Sprint**: Planejar e distribuir o trabalho inicial (Pages/MkDocs publicado, estrutura do repositório definida e páginas base da documentação criadas).
 
-    ### Tarefas da Sprint
+    **Tarefas da sprint**:
+    
     | ID   | Tarefa                                           | Responsável         | Status                   |
     |------|--------------------------------------------------|---------------------|--------------------------|
     | T-01 | GitHub Pages (MkDocs)                            | Caio                | ⏳ TODO · 📌 DEFINED     |
@@ -83,9 +49,40 @@ Adotaremos um fluxo inspirado em Scrum: em cada Sprint Planning definimos metas 
     - Itens para a próxima sprint: Entender oque já está implementado e dividir o que cada um pode contribuir
      
 
+??? abstract "Sprint 02 — 17-09-2025 - 23-09-2025"
 
-## Sprint 2
+    **Presentes:** Caio, Eduardo, João Felipe, Renata e Thomas 
 
+    **Início:** 17-09-2025
+    **Fim:** 23-09-2025
 
+    **Objetivo da Sprint**: Continuar e refinar o desenvolvimento do compilador, completando o analisador léxico, sintático e iniciar a confecção do analisador semântico.
 
-## Sprint 3
+    **Tarefas da sprint**:
+
+    | ID   | Tarefa                                           | Responsável         | Status                   |
+    |------|--------------------------------------------------|---------------------|--------------------------|
+    | T-01 | Refinar estruturas existentes (analisador léxico e sintático)                            | TODOS               | ⏳ TODO · 📌 DEFINED     |
+    | T-02 | Iniciar o analisador semântico                             | TODOS               | ⏳ TODO · 📌 DEFINED     |
+    | T-03 | Atualizar documentação do MKDocs (Github Pages)                             | TODOS               | ⏳ TODO · 📌 DEFINED     |
+
+    **Legenda de status:**  
+
+    - 📌 DEFINED — definido nesta sprint 
+    - ✅ DONE - concluída 
+    - 🚧 DOING - em andamento 
+    - ⏳ TODO - planejada, mas não começou 
+    - ⛔ BLOCKED - impedido (impedimento registrado abaixo) 
+
+    **Impedimentos**
+    - —  
+
+    **Diário**:
+
+    - Próxima reunião marcada para **23-09-2025**.
+    - Alinhamento: desenvolver e refinar analisadores léxico, sintático e semântico. 
+
+    **Resultados da Sprint (Review)**
+    - Entregas concluídas: *(preencher na review de 23/09)*  
+    - Itens para a próxima sprint: Entender o que já está implementado e dividir o que cada um pode contribuir
+     
