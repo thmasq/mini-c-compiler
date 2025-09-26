@@ -12,6 +12,11 @@ extern int yyparse();
 extern ast_node_t *ast_root;
 extern int error_count;
 extern symbol_table_t *global_symbol_table;
+extern int yylex(void);
+extern int lex_error_count;
+extern char *yytext;
+extern int get_line_number(void);
+extern int get_column(void);
 
 // Program version and info
 #define VERSION "2.0.0"
@@ -53,6 +58,7 @@ void print_usage(const char *program_name) {
     printf("  %s -S program.c -o program.ll      # Generate LLVM IR\n", program_name);
     printf("  %s -c program.c -o program          # Compile to executable\n", program_name);
     printf("  %s -v -t program.c                  # Verbose compilation with type checking\n", program_name);
+    printf("  --lex-only         Run only the lexer (exit 0 if ok)\n");
 }
 
 void print_version() {
@@ -177,6 +183,55 @@ int count_ir_lines(const char *filename) {
     return lines;
 }
 
+static int run_lex_only(const char *path, int verbose) {
+    FILE *f = fopen(path, "r");
+    if (!f) { perror("Error opening input file"); return 1; }
+    yyin = f;
+
+    lex_error_count = 0;                 
+    while (yylex() != 0) { /* consome tokens até EOF */ }
+
+    fclose(f);
+
+    if (verbose) {
+        if (lex_error_count == 0) {
+            printf("Lexical analysis: OK\n");
+        } else {
+            printf("Lexical analysis: %d error(s)\n", lex_error_count);
+        }
+    }
+    return (lex_error_count == 0) ? 0 : 1;
+}
+
+static int run_dump_lexemes(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) { perror("Error opening input file"); return 1; }
+    yyin = f;
+    lex_error_count = 0;
+
+    int tok;
+    while ((tok = yylex()) != 0) {
+        // imprime só o lexema de cada token (uma linha por token)
+        puts(yytext);
+    }
+    fclose(f);
+    return (lex_error_count == 0) ? 0 : 1;
+}
+
+static int run_dump_tokens(const char *path, int verbose) {
+    FILE *f = fopen(path, "r");
+    if (!f) { perror("Error opening input file"); return 1; }
+    yyin = f;
+    lex_error_count = 0;
+
+    int tok;
+    while ((tok = yylex()) != 0) {
+        printf("%d\t%s\t@%d:%d\n", tok, yytext, get_line_number(), get_column());
+    }
+    fclose(f);
+    return (lex_error_count == 0) ? 0 : 1;
+}
+
 int main(int argc, char *argv[]) {
     char *input_file = NULL;
     char *output_file = NULL;
@@ -187,6 +242,10 @@ int main(int argc, char *argv[]) {
     int verbose = 0;
     int enable_type_checking = 1; // Default enabled
     int debug_mode = 0;
+    int lex_only = 0;   
+    int dump_lexemes = 0;
+    int dump_tokens = 0;
+
     
     // Parse command line arguments
     for (int i = 1; i < argc; i++) {
@@ -210,6 +269,12 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--debug") == 0) {
             debug_mode = 1;
             verbose = 1; // Debug implies verbose
+        } else if (strcmp(argv[i], "--lex-only") == 0) {
+            lex_only = 1;
+        } else if (strcmp(argv[i], "--dump-lexemes") == 0) {
+            dump_lexemes = 1;
+        } else if (strcmp(argv[i], "--dump-tokens") == 0) {
+            dump_tokens = 1;
         } else if (strcmp(argv[i], "-O") == 0) {
             if (i + 1 < argc) {
                 optimization_level = atoi(argv[++i]);
@@ -238,6 +303,12 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Error: Multiple input files specified\n");
                 return 1;
             }
+            if (dump_lexemes) {
+                return run_dump_lexemes(input_file);
+            }
+            if (dump_tokens) {
+                return run_dump_tokens(input_file, verbose);
+            }
         }
     }
     
@@ -247,6 +318,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
+    if (lex_only) {
+        if (verbose) {
+            printf("%s v%s\n", PROGRAM_NAME, VERSION);
+            printf("Lex-only mode. Scanning tokens from: %s\n", input_file);
+        }
+        return run_lex_only(input_file, verbose);
+    }
+
     if (verbose) {
         printf("%s v%s\n", PROGRAM_NAME, VERSION);
         printf("Compiling: %s\n", input_file);
