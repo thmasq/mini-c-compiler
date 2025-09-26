@@ -1,12 +1,17 @@
+%option yylineno
+
 %{
 #define _POSIX_C_SOURCE 200809L
 #include "ast.h"
 #include "parser.h"
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
 int line_number = 1;
 int column = 0;
+
+int lex_error_count = 0;
 
 // Portable string duplication function
 static char *string_duplicate(const char *str) {
@@ -271,8 +276,9 @@ L?\"(\\.|[^\\"\n])*\"   { count_chars();
 \n                      { line_number++; column = 0; }
 
 .                       { 
-                          fprintf(stderr, "Unexpected character '%c' at line %d, column %d\n", 
+                          fprintf(stderr, "lex error: unexpected character '%c' at line %d, column %d\n", 
                                   yytext[0], line_number, column); 
+                          lex_error_count++;
                           count_chars();
                           return yytext[0];
                         }
