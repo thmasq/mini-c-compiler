@@ -59,6 +59,7 @@ void print_usage(const char *program_name) {
     printf("  %s -c program.c -o program          # Compile to executable\n", program_name);
     printf("  %s -v -t program.c                  # Verbose compilation with type checking\n", program_name);
     printf("  --lex-only         Run only the lexer (exit 0 if ok)\n");
+    printf("  --parse-only       Run only the parser (exit 0 if grammar accepts)\n");
 }
 
 void print_version() {
@@ -203,6 +204,28 @@ static int run_lex_only(const char *path, int verbose) {
     return (lex_error_count == 0) ? 0 : 1;
 }
 
+static int run_parse_only(const char *path, int verbose) {
+    FILE *f = fopen(path, "r");
+    if (!f) { perror("Error opening input file"); return 1; }
+    yyin = f;
+
+    error_count = 0;
+    ast_root = NULL;
+
+    int ret = yyparse();  
+    fclose(f);
+
+    if (verbose) {
+        if (error_count == 0 && ret == 0) {
+            printf("Syntactic analysis: OK\n");
+        } else {
+            printf("Syntactic analysis: %d error(s)\n", error_count);
+        }
+    }
+    return (error_count == 0 && ret == 0) ? 0 : 1;
+}
+
+
 static int run_dump_lexemes(const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) { perror("Error opening input file"); return 1; }
@@ -243,6 +266,7 @@ int main(int argc, char *argv[]) {
     int enable_type_checking = 1; // Default enabled
     int debug_mode = 0;
     int lex_only = 0;   
+    int parse_only = 0;
     int dump_lexemes = 0;
     int dump_tokens = 0;
 
@@ -275,6 +299,8 @@ int main(int argc, char *argv[]) {
             dump_lexemes = 1;
         } else if (strcmp(argv[i], "--dump-tokens") == 0) {
             dump_tokens = 1;
+        } else if (strcmp(argv[i], "--parse-only") == 0) {
+            parse_only = 1;
         } else if (strcmp(argv[i], "-O") == 0) {
             if (i + 1 < argc) {
                 optimization_level = atoi(argv[++i]);
@@ -332,6 +358,14 @@ int main(int argc, char *argv[]) {
         if (debug_mode) {
             printf("Debug mode enabled\n");
         }
+    }
+
+    if (parse_only) {
+        if (verbose) {
+            printf("%s v%s\n", PROGRAM_NAME, VERSION);
+            printf("Parse-only mode. Parsing: %s\n", input_file);
+        }
+        return run_parse_only(input_file, verbose);
     }
     
     // Generate temporary IR file name if compiling to executable
