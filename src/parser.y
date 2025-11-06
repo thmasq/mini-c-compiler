@@ -19,6 +19,7 @@ symbol_table_t *global_symbol_table = NULL;
 // Error recovery globals
 int error_count = 0;
 int max_errors = 20;
+static type_info_t current_decl_spec;
 
 // Portable string duplication function
 static char *string_duplicate(const char *str) {
@@ -316,16 +317,16 @@ init_declarator_list
     ;
 
 init_declarator
-    : declarator {
-        type_info_t dummy_type = create_type_info(string_duplicate("int"), 0, 0, NULL);
-        $$ = create_declaration(dummy_type, string_duplicate($1.name), NULL);
-        // dummy_type is now owned by the declaration
-    }
-    | declarator ASSIGN initializer {
-        type_info_t dummy_type = create_type_info(string_duplicate("int"), 0, 0, NULL);
-        $$ = create_declaration(dummy_type, string_duplicate($1.name), $3);
-        // dummy_type is now owned by the declaration
-    }
+    : declarator
+      {
+        type_info_t t = make_complete_type(current_decl_spec, $1);
+        $$ = create_declaration(t, string_duplicate($1.name), NULL);
+      }
+    | declarator ASSIGN initializer
+      {
+        type_info_t t = make_complete_type(current_decl_spec, $1);
+        $$ = create_declaration(t, string_duplicate($1.name), $3);
+      }
     ;
 
 storage_class_specifier
@@ -1135,21 +1136,23 @@ designator
 
 /* Top-level declaration handling */
 declaration
-    : declaration_specifiers SEMICOLON {
+    : declaration_specifiers
+      {
+        /* guarda os specifiers da declaração atual (int, const, etc.) */
+        current_decl_spec = deep_copy_type_info(& $1);
+        cleanup_type_info(& $1);
+      }
+      init_declarator_list SEMICOLON
+      {
+        /* a lista (ou o último item, no seu caso) já foi construída nos init_declarator */
+        $$ = $3;
+      }
+    | declaration_specifiers SEMICOLON
+      {
+        /* declaração só com specifiers (ex.: typedefs em outras gramáticas); aqui você ignora */
         $$ = NULL;
-        // Clean up the unused type_info
-        cleanup_type_info(&$1);
-    }
-    | declaration_specifiers init_declarator_list SEMICOLON {
-        $$ = $2;
-        if ($$) {
-            // Update the declaration with the proper type
-            $$->data.declaration.type_info = $1;
-            // The type_info is now owned by the declaration node
-        } else {
-            cleanup_type_info(&$1);
-        }
-    }
+        cleanup_type_info(& $1);
+      }
     ;
 
 %%

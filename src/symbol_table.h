@@ -35,6 +35,8 @@ typedef struct symbol {
     size_t offset;        // Offset in struct/union or stack frame
     
     // Array information
+    int is_array;
+    int array_len;
     int array_dimensions;
     size_t *array_sizes;  // Size of each dimension
     int is_vla;

@@ -186,6 +186,16 @@ ast_node_t *create_empty_stmt(void) {
 
 // Declaration creation
 ast_node_t *create_declaration(type_info_t type_info, char *name, ast_node_t *init) {
+    if (type_info.is_array) {
+        ast_node_t *node = create_node(AST_ARRAY_DECL);
+        node->data.array_decl.type_info = type_info;         
+        node->data.array_decl.name = name;
+        node->data.array_decl.size = type_info.array_size;   
+        node->data.array_decl.is_vla = type_info.is_vla ||
+        (type_info.array_size && type_info.array_size->type != AST_NUMBER);
+        return node;
+    }
+
     ast_node_t *node = create_node(AST_DECLARATION);
     node->data.declaration.type_info = type_info;
     node->data.declaration.name = name;
@@ -193,6 +203,7 @@ ast_node_t *create_declaration(type_info_t type_info, char *name, ast_node_t *in
     node->data.declaration.is_parameter = 0;
     return node;
 }
+
 
 ast_node_t *create_array_declaration(type_info_t type_info, char *name, ast_node_t *size) {
     ast_node_t *node = create_node(AST_ARRAY_DECL);
@@ -490,7 +501,7 @@ case_label_t *create_case_label(ast_node_t *value, char *label_name) {
 // Type system functions
 type_info_t merge_declaration_specifiers(type_info_t base, declarator_t declarator) {
     type_info_t result = base;
-    result.pointer_level = declarator.pointer_level;
+    result.pointer_level += declarator.pointer_level;   
     result.is_array = declarator.is_array;
     result.is_function = declarator.is_function;
     result.array_size = declarator.array_size;
@@ -955,4 +966,218 @@ int check_statement_types(ast_node_t *stmt, symbol_table_t *table) {
     
     // Simplified statement type checking
     return 1;
+}
+
+static const char* binop_str(binary_op_t op){
+    switch(op){
+        case OP_ADD: return "+";
+        case OP_SUB: return "-";
+        case OP_MUL: return "*";
+        case OP_DIV: return "/";
+        case OP_MOD: return "%";
+        case OP_EQ: return "==";
+        case OP_NE: return "!=";
+        case OP_LT: return "<";
+        case OP_LE: return "<=";
+        case OP_GT: return ">";
+        case OP_GE: return ">=";
+        case OP_LAND: return "&&";
+        case OP_LOR: return "||";
+        case OP_BAND: return "&";
+        case OP_BOR:  return "|";
+        case OP_BXOR: return "^";
+        case OP_LSHIFT: return "<<";
+        case OP_RSHIFT: return ">>";
+        case OP_ASSIGN: return "=";
+        case OP_ADD_ASSIGN: return "+=";
+        case OP_SUB_ASSIGN: return "-=";
+        case OP_MUL_ASSIGN: return "*=";
+        case OP_DIV_ASSIGN: return "/=";
+        case OP_MOD_ASSIGN: return "%=";
+        case OP_LSHIFT_ASSIGN: return "<<=";
+        case OP_RSHIFT_ASSIGN: return ">>=";
+        case OP_BAND_ASSIGN: return "&=";
+        case OP_BOR_ASSIGN:  return "|=";
+        case OP_BXOR_ASSIGN: return "^=";
+    }
+    return "?";
+}
+
+static const char* unop_str(unary_op_t op){
+    switch(op){
+        case OP_NEG: return "neg";
+        case OP_NOT: return "!";
+        case OP_BNOT: return "~";
+        case OP_PREINC: return "pre++";
+        case OP_POSTINC: return "post++";
+        case OP_PREDEC: return "pre--";
+        case OP_POSTDEC: return "post--";
+    }
+    return "?";
+}
+
+static void indent_out(int n){
+    for(int i=0;i<n;i++) putchar(' ');
+}
+
+static void print_ptr_stars(int n){
+    for(int i=0;i<n;i++) putchar('*');
+}
+
+static void print_type_info(type_info_t t){
+    const char *base = t.base_type ? t.base_type : "int";
+    fputs(base, stdout);
+    if (t.pointer_level > 0) print_ptr_stars(t.pointer_level);
+}
+
+void print_ast(ast_node_t *node, int indent){
+    if(!node){ indent_out(indent); puts("(null)"); return; }
+
+    switch(node->type){
+        case AST_PROGRAM: {
+            indent_out(indent); printf("Program (%d decls)\n", node->data.program.decl_count);
+            for(int i=0;i<node->data.program.decl_count;i++)
+                print_ast(node->data.program.declarations[i], indent+2);
+        } break;
+
+        case AST_FUNCTION: {
+            indent_out(indent);
+            printf("Function %s -> ", node->data.function.name ? node->data.function.name : "(anon)");
+            print_type_info(node->data.function.return_type);
+            putchar('\n');
+
+            if(node->data.function.param_count>0){
+                indent_out(indent+2); printf("Params (%d):\n", node->data.function.param_count);
+                for(int i=0;i<node->data.function.param_count;i++)
+                    print_ast(node->data.function.params[i], indent+4);
+            }
+            print_ast(node->data.function.body, indent+2);
+        } break;
+
+        case AST_PARAMETER: {
+            indent_out(indent);
+            printf("Param %s : ", node->data.parameter.name ? node->data.parameter.name : "(anon)");
+            print_type_info(node->data.parameter.type_info);
+            putchar('\n');
+        } break;
+
+        case AST_COMPOUND_STMT: {
+            indent_out(indent); printf("{\n");
+            for(int i=0;i<node->data.compound.stmt_count;i++)
+                print_ast(node->data.compound.statements[i], indent+2);
+            indent_out(indent); printf("}\n");
+        } break;
+
+        case AST_DECLARATION: {
+            indent_out(indent);
+            printf("Decl %s : ", node->data.declaration.name ? node->data.declaration.name : "(anon)");
+            print_type_info(node->data.declaration.type_info);
+            putchar('\n');
+
+            if(node->data.declaration.init){
+                indent_out(indent+2); puts("Init:");
+                print_ast(node->data.declaration.init, indent+4);
+            }
+        } break;
+
+        case AST_ASSIGNMENT: {
+            indent_out(indent);
+            if(node->data.assignment.name){
+                printf("Assign %s %s\n", node->data.assignment.name, binop_str(node->data.assignment.op));
+            }else{
+                printf("Assign (lvalue) %s\n", binop_str(node->data.assignment.op));
+                print_ast(node->data.assignment.lvalue, indent+2);
+            }
+            print_ast(node->data.assignment.value, indent+2);
+        } break;
+
+        case AST_RETURN_STMT: {
+            indent_out(indent); puts("return");
+            if(node->data.return_stmt.value)
+                print_ast(node->data.return_stmt.value, indent+2);
+        } break;
+
+        case AST_IF_STMT: {
+            indent_out(indent); puts("if");
+            print_ast(node->data.if_stmt.condition, indent+2);
+            indent_out(indent); puts("then");
+            print_ast(node->data.if_stmt.then_stmt, indent+2);
+            if(node->data.if_stmt.else_stmt){
+                indent_out(indent); puts("else");
+                print_ast(node->data.if_stmt.else_stmt, indent+2);
+            }
+        } break;
+
+        case AST_WHILE_STMT:
+            indent_out(indent); puts("while");
+            print_ast(node->data.while_stmt.condition, indent+2);
+            print_ast(node->data.while_stmt.body, indent+2);
+            break;
+
+        case AST_FOR_STMT:
+            indent_out(indent); puts("for");
+            if(node->data.for_stmt.init){ indent_out(indent+2); puts("init:"); print_ast(node->data.for_stmt.init, indent+4); }
+            if(node->data.for_stmt.condition){ indent_out(indent+2); puts("cond:"); print_ast(node->data.for_stmt.condition, indent+4); }
+            if(node->data.for_stmt.update){ indent_out(indent+2); puts("upd:"); print_ast(node->data.for_stmt.update, indent+4); }
+            print_ast(node->data.for_stmt.body, indent+2);
+            break;
+
+        case AST_EXPR_STMT:
+            indent_out(indent); puts("expr;");
+            if(node->data.expr_stmt.expr)
+                print_ast(node->data.expr_stmt.expr, indent+2);
+            break;
+
+        case AST_BINARY_OP:
+            indent_out(indent); printf("(%s)\n", binop_str(node->data.binary_op.op));
+            print_ast(node->data.binary_op.left, indent+2);
+            print_ast(node->data.binary_op.right, indent+2);
+            break;
+
+        case AST_UNARY_OP:
+            indent_out(indent); printf("(un %s)\n", unop_str(node->data.unary_op.op));
+            print_ast(node->data.unary_op.operand, indent+2);
+            break;
+
+        case AST_IDENTIFIER:
+            indent_out(indent); printf("id %s\n", node->data.identifier.name);
+            break;
+
+        case AST_NUMBER:
+            indent_out(indent); printf("num %d\n", node->data.number.value);
+            break;
+
+        case AST_CALL:
+            indent_out(indent); printf("call %s (%d args)\n", node->data.call.name, node->data.call.arg_count);
+            for(int i=0;i<node->data.call.arg_count;i++)
+                print_ast(node->data.call.args[i], indent+2);
+            break;
+
+        case AST_ARRAY_ACCESS:
+            indent_out(indent); puts("array[]");
+            print_ast(node->data.array_access.array, indent+2);
+            print_ast(node->data.array_access.index, indent+2);
+            break;
+
+        case AST_ADDRESS_OF:
+            indent_out(indent); puts("&");
+            print_ast(node->data.address_of.operand, indent+2);
+            break;
+
+        case AST_DEREFERENCE:
+            indent_out(indent); puts("*");
+            print_ast(node->data.dereference.operand, indent+2);
+            break;
+
+        case AST_CONDITIONAL:
+            indent_out(indent); puts("?:");
+            print_ast(node->data.conditional.condition, indent+2);
+            print_ast(node->data.conditional.true_expr, indent+2);
+            print_ast(node->data.conditional.false_expr, indent+2);
+            break;
+
+        default:
+            indent_out(indent); printf("(node %d)\n", node->type);
+            break;
+    }
 }

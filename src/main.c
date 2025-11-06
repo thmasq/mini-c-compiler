@@ -269,6 +269,7 @@ int main(int argc, char *argv[]) {
     int parse_only = 0;
     int dump_lexemes = 0;
     int dump_tokens = 0;
+    int dump_ast = 0;
 
     
     // Parse command line arguments
@@ -301,6 +302,8 @@ int main(int argc, char *argv[]) {
             dump_tokens = 1;
         } else if (strcmp(argv[i], "--parse-only") == 0) {
             parse_only = 1;
+        } else if (strcmp(argv[i], "--dump-ast") == 0) {
+            dump_ast = 1;
         } else if (strcmp(argv[i], "-O") == 0) {
             if (i + 1 < argc) {
                 optimization_level = atoi(argv[++i]);
@@ -343,6 +346,28 @@ int main(int argc, char *argv[]) {
         print_usage(argv[0]);
         return 1;
     }
+
+    if (dump_ast) {
+        // parse + imprime AST e sai
+        FILE *f = fopen(input_file, "r");
+        if (!f) { perror("Error opening input file"); return 1; }
+        yyin = f;
+        error_count = 0;
+        ast_root = NULL;
+
+        int ret = yyparse();
+        fclose(f);
+
+        if (error_count == 0 && ret == 0 && ast_root) {
+            print_ast(ast_root, 0);
+            free_ast(ast_root);
+            return 0;
+        } else {
+            fprintf(stderr, "Cannot dump AST: parse errors (%d)\n", error_count);
+            return 1;
+        }
+    }
+
     
     if (lex_only) {
         if (verbose) {
