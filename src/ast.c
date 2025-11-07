@@ -1053,6 +1053,8 @@ int check_types(ast_node_t *ast, symbol_table_t *table) {
 
 int check_expression_types(ast_node_t *expr, symbol_table_t *table) {
     if (!expr) return 1;
+
+    // Simplified type checking - just verify identifiers exist
     if (expr->type == AST_IDENTIFIER) {
         symbol_t *sym = find_symbol(table, expr->data.identifier.name);
         if (!sym) {
@@ -1062,10 +1064,12 @@ int check_expression_types(ast_node_t *expr, symbol_table_t *table) {
         expr->data.identifier.type = sym->type_info;
         return 1;
     }
-    return 1;
+    return 1; // For now, accept all other expressions
 }
 
 int check_statement_types(ast_node_t *stmt, symbol_table_t *table) {
     if (!stmt) return 1;
+
+    // Simplified statement type checking
     return 1;
 }
