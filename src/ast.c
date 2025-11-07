@@ -904,39 +904,155 @@ void free_ast(ast_node_t *node) {
     free(node);
 }
 
-// Simplified type checking functions
+
+static void traverse_node(ast_node_t *node, symbol_table_t *table);
+
+static void traverse_program(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    for (int i = 0; i < node->data.program.decl_count; i++) {
+        traverse_node(node->data.program.declarations[i], table);
+    }
+}
+
+static void traverse_function(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    enter_scope(table);
+    set_current_function(table, node->data.function.name);
+
+    
+    traverse_node(node->data.function.body, table);
+    
+    set_current_function(table, NULL);
+    exit_scope(table);
+}
+
+static void traverse_declaration(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    if (node->data.declaration.init) {
+        traverse_node(node->data.declaration.init, table);
+    }
+
+    if (add_symbol(table, node->data.declaration.name, SYM_VARIABLE, node->data.declaration.type_info) == NULL) {
+        error_count++;
+    }
+}
+
+static void traverse_identifier(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+
+    symbol_t *symbol = find_symbol(table, node->data.identifier.name);
+    if (symbol == NULL) {
+        fprintf(stderr, "Semantic Error: Use of undeclared identifier '%s' at line %d\n", node->data.identifier.name, node->line_number);
+        error_count++;
+    } else {
+        node->data.identifier.type = symbol->type_info;
+    }
+}
+
+static void traverse_assignment(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+
+    traverse_node(node->data.assignment.lvalue, table);
+    traverse_node(node->data.assignment.value, table);
+
+    type_info_t lvalue_type = get_expression_type(node->data.assignment.lvalue, table);
+    type_info_t rvalue_type = get_expression_type(node->data.assignment.value, table);
+
+    if (is_integer_type(&lvalue_type) && rvalue_type.pointer_level > 0) {
+         fprintf(stderr, "Semantic Error: Assigning a pointer to an integer variable at line %d\n", node->line_number);
+         error_count++;
+    }
+
+    free_type_info(&lvalue_type);
+    free_type_info(&rvalue_type);
+}
+
+static void traverse_compound_statement(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+
+    enter_scope(table);
+    for (int i = 0; i < node->data.compound.stmt_count; i++) {
+        traverse_node(node->data.compound.statements[i], table);
+    }
+    exit_scope(table);
+}
+
+static void traverse_node(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+
+    switch (node->type) {
+        case AST_PROGRAM:
+            traverse_program(node, table);
+            break;
+        case AST_FUNCTION:
+            traverse_function(node, table);
+            break;
+        case AST_COMPOUND_STMT:
+            traverse_compound_statement(node, table);
+            break;
+        case AST_DECLARATION:
+            traverse_declaration(node, table);
+            break;
+        case AST_IDENTIFIER:
+            traverse_identifier(node, table);
+            break;
+        case AST_ASSIGNMENT:
+            traverse_assignment(node, table);
+            break;
+        
+        case AST_IF_STMT:
+            traverse_node(node->data.if_stmt.condition, table);
+            traverse_node(node->data.if_stmt.then_stmt, table);
+            traverse_node(node->data.if_stmt.else_stmt, table);
+            break;
+        case AST_WHILE_STMT:
+            traverse_node(node->data.while_stmt.condition, table);
+            traverse_node(node->data.while_stmt.body, table);
+            break;
+        case AST_EXPR_STMT:
+            traverse_node(node->data.expr_stmt.expr, table);
+            break;
+        case AST_CALL:
+            if (node->data.call.name) {
+                //check if the name is a declared function
+            }
+            for (int i = 0; i < node->data.call.arg_count; i++) {
+                traverse_node(node->data.call.args[i], table);
+            }
+            break;
+        case AST_RETURN_STMT:
+            traverse_node(node->data.return_stmt.value, table);
+            break;
+
+        case AST_NUMBER:
+        case AST_STRING_LITERAL:
+        case AST_CHARACTER:
+            break;
+
+        default:
+            break;
+    }
+}
+
+/**
+ * @brief Performs type checking and semantic analysis by traversing the AST.
+ * 
+ * @param ast The root of the AST to check.
+ * @param table The global symbol table.
+ * @return int 1 on success, 0 on failure (if errors were found).
+ */
 int check_types(ast_node_t *ast, symbol_table_t *table) {
     if (!ast || !table) return 0;
-    
-    switch (ast->type) {
-        case AST_PROGRAM:
-            for (int i = 0; i < ast->data.program.decl_count; i++) {
-                if (!check_types(ast->data.program.declarations[i], table)) {
-                    return 0;
-                }
-            }
-            return 1;
-            
-        case AST_FUNCTION:
-            return check_types(ast->data.function.body, table);
-            
-        case AST_COMPOUND_STMT:
-            for (int i = 0; i < ast->data.compound.stmt_count; i++) {
-                if (!check_types(ast->data.compound.statements[i], table)) {
-                    return 0;
-                }
-            }
-            return 1;
-            
-        default:
-            return check_expression_types(ast, table) && check_statement_types(ast, table);
-    }
+
+    traverse_node(ast, table);
+
+    return error_count == 0;
 }
 
 int check_expression_types(ast_node_t *expr, symbol_table_t *table) {
     if (!expr) return 1;
-    
-    // Simplified type checking - just verify identifiers exist
     if (expr->type == AST_IDENTIFIER) {
         symbol_t *sym = find_symbol(table, expr->data.identifier.name);
         if (!sym) {
@@ -946,13 +1062,10 @@ int check_expression_types(ast_node_t *expr, symbol_table_t *table) {
         expr->data.identifier.type = sym->type_info;
         return 1;
     }
-    
-    return 1; // For now, accept all other expressions
+    return 1;
 }
 
 int check_statement_types(ast_node_t *stmt, symbol_table_t *table) {
     if (!stmt) return 1;
-    
-    // Simplified statement type checking
     return 1;
 }
