@@ -33,27 +33,6 @@ static char *string_duplicate(const char *str) {
     return copy;
 }
 
-// Deep copy function for type_info_t with proper memory management
-static type_info_t deep_copy_type_info(const type_info_t *src) {
-    type_info_t result;
-    result.base_type = src->base_type ? string_duplicate(src->base_type) : NULL;
-    result.pointer_level = src->pointer_level;
-    result.is_array = src->is_array;
-    result.is_vla = src->is_vla;
-    result.is_function = src->is_function;
-    result.is_struct = src->is_struct;
-    result.is_union = src->is_union;
-    result.is_enum = src->is_enum;
-    result.is_incomplete = src->is_incomplete;
-    result.storage_class = src->storage_class;
-    result.qualifiers = src->qualifiers;
-    result.array_size = NULL; // Don't copy AST nodes - they're managed separately
-    result.param_types = NULL; // Don't copy param arrays - they're managed separately
-    result.param_count = src->param_count;
-    result.is_variadic = src->is_variadic;
-    return result;
-}
-
 // Helper to merge declaration specifiers and declarator with proper cleanup
 static type_info_t make_complete_type(type_info_t base_type, declarator_t decl) {
     type_info_t result = deep_copy_type_info(&base_type);

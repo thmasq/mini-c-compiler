@@ -37,7 +37,7 @@ static char *string_duplicate(const char *str) {
 }
 
 // Deep copy function for type_info_t with proper memory management
-static type_info_t deep_copy_type_info(const type_info_t *src) {
+type_info_t deep_copy_type_info(const type_info_t *src) {
     type_info_t result;
     result.base_type = src->base_type ? string_duplicate(src->base_type) : NULL;
     result.pointer_level = src->pointer_level;

@@ -121,6 +121,7 @@ symbol_t *find_label(symbol_table_t *table, const char *label_name);
 char *generate_unique_name(symbol_table_t *table, const char *base_name);
 int is_compatible_type(type_info_t *type1, type_info_t *type2);
 type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table);
+type_info_t deep_copy_type_info(const type_info_t *src);
 
 // Memory management helpers
 void free_symbol(symbol_t *sym);

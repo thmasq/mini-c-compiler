@@ -958,7 +958,8 @@ static void traverse_identifier(ast_node_t *node, symbol_table_t *table) {
         fprintf(stderr, "Semantic Error: Use of undeclared identifier '%s' at line %d\n", node->data.identifier.name, node->line_number);
         error_count++;
     } else {
-        node->data.identifier.type = symbol->type_info;
+        free_type_info(&node->data.identifier.type);
+        node->data.identifier.type = deep_copy_type_info(&symbol->type_info);
     }
 }
 
