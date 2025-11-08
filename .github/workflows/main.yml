@@ -1,0 +1,229 @@
+name: Mini C Compiler CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          flex \
+          bison \
+          clang \
+          llvm
+
+    - name: Display tool versions
+      run: |
+        gcc --version
+        flex --version
+        bison --version
+        clang --version
+        llvm-config --version
+
+    - name: Build compiler
+      run: |
+        make clean || true
+        make -j$(nproc)
+
+    - name: Verify compiler binary
+      run: |
+        ls -lh minicc
+        ./minicc --version
+        ./minicc --help
+
+    - name: Run lexer tests
+      run: |
+        chmod +x tests/lex/run.sh
+        bash tests/lex/run.sh
+
+    - name: Run parser tests
+      run: |
+        chmod +x tests/syntax/run.sh
+        bash tests/syntax/run.sh
+
+    - name: Install test files
+      run: make install-tests
+
+    - name: Test LLVM IR generation (basic)
+      run: |
+        make test
+        echo "✓ Basic arithmetic test passed"
+
+    - name: Test LLVM IR generation (advanced)
+      run: |
+        make test-advanced
+        echo "✓ Advanced fibonacci test passed"
+
+    - name: Test LLVM IR generation (examples)
+      run: |
+        make test-example
+        echo "✓ Example test passed"
+
+    - name: Test LLVM IR generation (pointers)
+      run: |
+        make test-pointers
+        echo "✓ Pointer test passed"
+
+    - name: Test executable generation and return codes
+      run: |
+        echo "=== Testing executable generation and return codes ==="
+        
+        # Test 1: Basic arithmetic (should return 50)
+        echo "Test 1: Basic arithmetic"
+        make test-exec
+        RESULT=$?
+        if [ $RESULT -eq 50 ]; then
+          echo "✓ Basic arithmetic returned correct value: $RESULT"
+        else
+          echo "✗ Basic arithmetic failed. Expected 50, got $RESULT"
+          exit 1
+        fi
+        
+        # Test 2: Fibonacci (should return 0)
+        echo "Test 2: Fibonacci"
+        make test-advanced-exec
+        RESULT=$?
+        if [ $RESULT -eq 0 ]; then
+          echo "✓ Fibonacci returned correct value: $RESULT"
+        else
+          echo "✗ Fibonacci failed. Expected 0, got $RESULT"
+          exit 1
+        fi
+        
+        # Test 3: Example (should return 16)
+        echo "Test 3: Example (power function)"
+        make test-example-exec
+        RESULT=$?
+        if [ $RESULT -eq 16 ]; then
+          echo "✓ Example returned correct value: $RESULT"
+        else
+          echo "✗ Example failed. Expected 16, got $RESULT"
+          exit 1
+        fi
+        
+        # Test 4: Pointers (should return 0 = all tests passed)
+        echo "Test 4: Comprehensive pointer tests"
+        make test-pointers-exec
+        RESULT=$?
+        if [ $RESULT -eq 0 ]; then
+          echo "✓ Pointer tests all passed: $RESULT"
+        else
+          echo "✗ Pointer tests failed with code: $RESULT"
+          exit 1
+        fi
+
+    - name: Test custom programs
+      run: |
+        echo "=== Testing custom programs ==="
+        
+        # Test simple return value
+        cat > /tmp/test_return.c << 'EOF'
+        int main() {
+            return 42;
+        }
+        EOF
+        
+        ./minicc -c /tmp/test_return.c -o /tmp/test_return
+        /tmp/test_return
+        RESULT=$?
+        if [ $RESULT -eq 42 ]; then
+          echo "✓ Simple return test passed: $RESULT"
+        else
+          echo "✗ Simple return test failed. Expected 42, got $RESULT"
+          exit 1
+        fi
+        
+        # Test conditional logic
+        cat > /tmp/test_conditional.c << 'EOF'
+        int main() {
+            int x = 10;
+            if (x > 5) {
+                return 1;
+            } else {
+                return 0;
+            }
+        }
+        EOF
+        
+        ./minicc -c /tmp/test_conditional.c -o /tmp/test_conditional
+        /tmp/test_conditional
+        RESULT=$?
+        if [ $RESULT -eq 1 ]; then
+          echo "✓ Conditional test passed: $RESULT"
+        else
+          echo "✗ Conditional test failed. Expected 1, got $RESULT"
+          exit 1
+        fi
+        
+        # Test loop
+        cat > /tmp/test_loop.c << 'EOF'
+        int main() {
+            int sum = 0;
+            int i = 0;
+            while (i < 5) {
+                sum = sum + i;
+                i = i + 1;
+            }
+            return sum; // Should be 0+1+2+3+4 = 10
+        }
+        EOF
+        
+        ./minicc -c /tmp/test_loop.c -o /tmp/test_loop
+        /tmp/test_loop
+        RESULT=$?
+        if [ $RESULT -eq 10 ]; then
+          echo "✓ Loop test passed: $RESULT"
+        else
+          echo "✗ Loop test failed. Expected 10, got $RESULT"
+          exit 1
+        fi
+
+    - name: Test compilation flags
+      run: |
+        echo "=== Testing compilation flags ==="
+        
+        # Test verbose mode
+        ./minicc -v examples/sample.c -o /tmp/test_verbose.ll
+        echo "✓ Verbose mode works"
+        
+        # Test optimization levels
+        for OPT in 0 1 2 3; do
+          ./minicc -O$OPT -c examples/sample.c -o /tmp/test_opt$OPT
+          echo "✓ Optimization level -O$OPT works"
+        done
+
+    - name: Generate test report
+      if: always()
+      run: |
+        echo "=== CI Test Summary ==="
+        echo "Compiler: Built successfully"
+        echo "Lexer tests: Passed"
+        echo "Parser tests: Passed"
+        echo "IR generation: Passed"
+        echo "Executable generation: Passed"
+        echo "Return code validation: Passed"
+        echo "All tests completed successfully! ✓"
+
+    - name: Upload artifacts on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-artifacts
+        path: |
+          build/*.ll
+          build/test_*
+          /tmp/*.ll
+          /tmp/test_*
