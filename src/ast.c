@@ -931,7 +931,36 @@ static void traverse_function(ast_node_t *node, symbol_table_t *table) {
     enter_scope(table);
     set_current_function(table, node->data.function.name);
 
-    
+    for (int i = 0; i < node->data.function.param_count; i++) {
+        ast_node_t *param = node->data.function.params[i];
+        if (!param) continue;
+
+        const char *name = NULL;
+        type_info_t param_type;
+
+        if (param->type == AST_PARAMETER) {
+            name = param->data.parameter.name;
+            param_type = param->data.parameter.type_info;
+        } else if (param->type == AST_DECLARATION) {
+            name = param->data.declaration.name;
+            param_type = param->data.declaration.type_info;
+        } else {
+            continue;
+        }
+
+        if (name == NULL) {
+            continue;
+        }
+
+        if (add_symbol(table, name, SYM_VARIABLE, param_type) == NULL) {
+            fprintf(stderr, "Semantic Error: Redeclaration of parameter '%s' in function '%s' at line %d\n",
+                    name,
+                    node->data.function.name ? node->data.function.name : "(anon)",
+                    param->line_number);
+            error_count++;
+        }
+    }
+
     traverse_node(node->data.function.body, table);
     
     set_current_function(table, NULL);
