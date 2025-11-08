@@ -400,6 +400,8 @@ typedef struct ast_node {
 type_info_t create_type_info(char *base_type, int pointer_level, int is_array, ast_node_t *array_size);
 declarator_t make_declarator(char *name, int pointer_level, int is_array, ast_node_t *array_size);
 
+void print_ast(struct ast_node *node, int indent);
+
 // Program and function creation
 ast_node_t *create_program(ast_node_t **declarations, int decl_count);
 ast_node_t *create_function(char *name, type_info_t return_type, ast_node_t **params, int param_count, ast_node_t *body);

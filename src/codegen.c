@@ -434,21 +434,47 @@ static int generate_expression(ast_node_t *node) {
             int right = generate_expression(node->data.binary_op.right);
             int temp = get_next_temp();
             
-            const char *op_str = "";
-            const char *result_type = "i32";
+            if (is_comparison_op(node->data.binary_op.op)) {
+            const char *pred =
+                node->data.binary_op.op == OP_EQ ? "eq" :
+                node->data.binary_op.op == OP_NE ? "ne" :
+                node->data.binary_op.op == OP_LT ? "slt" :
+                node->data.binary_op.op == OP_LE ? "sle" :
+                node->data.binary_op.op == OP_GT ? "sgt" : "sge";
+
+            char L[32], R[32];
+                if (node->data.binary_op.left->type == AST_NUMBER)  snprintf(L, sizeof(L), "%d", left);
+                else                                                snprintf(L, sizeof(L), "%%t%d", left);
+                if (node->data.binary_op.right->type == AST_NUMBER) snprintf(R, sizeof(R), "%d", right);
+                else                                                snprintf(R, sizeof(R), "%%t%d", right);
+
+                // icmp: operandos i32, resultado i1
+                fprintf(ctx.output, "  %%t%d = icmp %s i32 %s, %s\n", temp, pred, L, R);
+                return temp;
+            }
             
+            int left_i32 = left, right_i32 = right;
+
+            if (node->data.binary_op.left->type == AST_BINARY_OP &&
+                is_comparison_op(node->data.binary_op.left->data.binary_op.op)) {
+                int z = get_next_temp();
+                fprintf(ctx.output, "  %%t%d = zext i1 %%t%d to i32\n", z, left);
+                left_i32 = z;
+            }
+            if (node->data.binary_op.right->type == AST_BINARY_OP &&
+                is_comparison_op(node->data.binary_op.right->data.binary_op.op)) {
+                int z = get_next_temp();
+                fprintf(ctx.output, "  %%t%d = zext i1 %%t%d to i32\n", z, right);
+                right_i32 = z;
+            }
+
+            const char *op_str = NULL;
             switch (node->data.binary_op.op) {
                 case OP_ADD: op_str = "add"; break;
                 case OP_SUB: op_str = "sub"; break;
                 case OP_MUL: op_str = "mul"; break;
                 case OP_DIV: op_str = "sdiv"; break;
                 case OP_MOD: op_str = "srem"; break;
-                case OP_EQ: op_str = "icmp eq"; result_type = "i1"; break;
-                case OP_NE: op_str = "icmp ne"; result_type = "i1"; break;
-                case OP_LT: op_str = "icmp slt"; result_type = "i1"; break;
-                case OP_LE: op_str = "icmp sle"; result_type = "i1"; break;
-                case OP_GT: op_str = "icmp sgt"; result_type = "i1"; break;
-                case OP_GE: op_str = "icmp sge"; result_type = "i1"; break;
                 case OP_BAND: op_str = "and"; break;
                 case OP_BOR: op_str = "or"; break;
                 case OP_BXOR: op_str = "xor"; break;
@@ -459,22 +485,14 @@ static int generate_expression(ast_node_t *node) {
                     return -1;
             }
             
-            char left_operand[32], right_operand[32];
-            if (node->data.binary_op.left->type == AST_NUMBER) {
-                snprintf(left_operand, sizeof(left_operand), "%d", left);
-            } else {
-                snprintf(left_operand, sizeof(left_operand), "%%t%d", left);
-            }
-            
-            if (node->data.binary_op.right->type == AST_NUMBER) {
-                snprintf(right_operand, sizeof(right_operand), "%d", right);
-            } else {
-                snprintf(right_operand, sizeof(right_operand), "%%t%d", right);
-            }
-            
-            fprintf(ctx.output, "  %%t%d = %s %s %s, %s\n", 
-                    temp, op_str, result_type, left_operand, right_operand);
-            
+            char L[32], R[32];
+            if (node->data.binary_op.left->type == AST_NUMBER)  snprintf(L, sizeof(L), "%d", left_i32);
+            else                                                snprintf(L, sizeof(L), "%%t%d", left_i32);
+            if (node->data.binary_op.right->type == AST_NUMBER) snprintf(R, sizeof(R), "%d", right_i32);
+            else                                                snprintf(R, sizeof(R), "%%t%d", right_i32);
+
+            // Sempre i32 aqui
+            fprintf(ctx.output, "  %%t%d = %s i32 %s, %s\n", temp, op_str, L, R);
             return temp;
         }
 
@@ -1663,7 +1681,7 @@ static void generate_statement(ast_node_t *node) {
             ctx.current_switch_end_label = string_duplicate(end_label);
             
             int switch_val = generate_expression(node->data.switch_stmt.expression);
-            
+            (void)switch_val;
             // For now, implement switch as a series of if-else statements
             // A more sophisticated implementation would use LLVM's switch instruction
             

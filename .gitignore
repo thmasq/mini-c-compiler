@@ -1,2 +1,8 @@
 build/*
 !build/.gitkeep
+minicc
+sample
+*.ll
+*.o
+*.out
+exemplo.c
