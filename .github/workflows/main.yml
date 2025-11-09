@@ -83,8 +83,12 @@ jobs:
         # Test 1: Basic arithmetic (should return 50)
         echo "Test 1: Basic arithmetic"
         ./minicc -c tests/basic/arithmetic.c -o build/test_arithmetic
+        
+        set +e # Disable exit-on-error
         build/test_arithmetic
         RESULT=$?
+        set -e # Re-enable exit-on-error
+        
         if [ $RESULT -eq 50 ]; then
           echo "✓ Basic arithmetic returned correct value: $RESULT"
         else
@@ -97,8 +101,12 @@ jobs:
         # Test 2: Fibonacci (should return 0)
         echo "Test 2: Fibonacci"
         ./minicc -c tests/advanced/fibonacci.c -o build/test_fibonacci
+        
+        set +e # Disable exit-on-error
         build/test_fibonacci
         RESULT=$?
+        set -e # Re-enable exit-on-error
+        
         if [ $RESULT -eq 0 ]; then
           echo "✓ Fibonacci returned correct value: $RESULT"
         else
@@ -111,8 +119,12 @@ jobs:
         # Test 3: Example (should return 16)
         echo "Test 3: Example (power function)"
         ./minicc -c examples/sample.c -o build/test_example
+        
+        set +e # Disable exit-on-error
         build/test_example
         RESULT=$?
+        set -e # Re-enable exit-on-error
+        
         if [ $RESULT -eq 16 ]; then
           echo "✓ Example returned correct value: $RESULT"
         else
@@ -125,8 +137,12 @@ jobs:
         # Test 4: Pointers (should return 0 = all tests passed)
         echo "Test 4: Comprehensive pointer tests"
         ./minicc -c examples/pointer_test.c -o build/test_pointers
+        
+        set +e # Disable exit-on-error
         build/test_pointers
         RESULT=$?
+        set -e # Re-enable exit-on-error
+        
         if [ $RESULT -eq 0 ]; then
           echo "✓ Pointer tests all passed: $RESULT"
         else
@@ -146,8 +162,12 @@ jobs:
         EOF
         
         ./minicc -c /tmp/test_return.c -o /tmp/test_return
+        
+        set +e # Disable exit-on-error
         /tmp/test_return
         RESULT=$?
+        set -e # Re-enable exit-on-error
+        
         if [ $RESULT -eq 42 ]; then
           echo "✓ Simple return test passed: $RESULT"
         else
@@ -168,8 +188,12 @@ jobs:
         EOF
         
         ./minicc -c /tmp/test_conditional.c -o /tmp/test_conditional
+        
+        set +e # Disable exit-on-error
         /tmp/test_conditional
         RESULT=$?
+        set -e # Re-enable exit-on-error
+        
         if [ $RESULT -eq 1 ]; then
           echo "✓ Conditional test passed: $RESULT"
         else
@@ -191,8 +215,12 @@ jobs:
         EOF
         
         ./minicc -c /tmp/test_loop.c -o /tmp/test_loop
+        
+        set +e # Disable exit-on-error
         /tmp/test_loop
         RESULT=$?
+        set -e # Re-enable exit-on-error
+        
         if [ $RESULT -eq 10 ]; then
           echo "✓ Loop test passed: $RESULT"
         else
@@ -218,7 +246,7 @@ jobs:
       if: always()
       run: |
         echo "=== CI Test Summary ==="
-        echo "All preceding steps completed successfully! ✓"
+        echo "CI run finished."
 
     - name: Upload artifacts on failure
       if: failure()
