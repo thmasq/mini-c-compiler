@@ -50,7 +50,7 @@ type_info_t deep_copy_type_info(const type_info_t *src) {
     result.is_incomplete = src->is_incomplete;
     result.storage_class = src->storage_class;
     result.qualifiers = src->qualifiers;
-    result.array_size = NULL;
+    result.array_size = src->array_size;
     result.param_types = NULL;
     result.param_count = src->param_count;
     result.is_variadic = src->is_variadic;

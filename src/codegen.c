@@ -47,6 +47,35 @@ static char *string_duplicate(const char *str) {
     return copy;
 }
 
+static size_t get_basic_type_size(const char *type_name) {
+    if (!type_name) return 4;
+    if (strcmp(type_name, "char") == 0) return 1;
+    if (strcmp(type_name, "short") == 0) return 2;
+    if (strcmp(type_name, "int") == 0) return 4;
+    if (strcmp(type_name, "long") == 0) return 8;
+    if (strcmp(type_name, "float") == 0) return 4;
+    if (strcmp(type_name, "double") == 0) return 8;
+    if (strcmp(type_name, "_Bool") == 0) return 1;
+    if (strstr(type_name, "int")) return 4;
+    return 4; // default
+}
+
+static size_t get_array_length(symbol_t *sym, symbol_table_t *table) {
+    if (!sym || !sym->type_info.is_array) {
+        return 0;
+    }
+    
+    if (sym->type_info.array_size && sym->type_info.array_size->type == AST_NUMBER) {
+        return sym->type_info.array_size->data.number.value;
+    }
+    
+    size_t element_size = get_basic_type_size(sym->type_info.base_type);
+    if (element_size == 0) element_size = 4; // default to int size
+    
+    size_t array_length = (element_size > 0) ? (sym->size / element_size) : 0;
+    return array_length;
+}
+
 static type_info_t deep_copy_type_info_codegen(const type_info_t *src) {
     type_info_t result;
     result.base_type = src->base_type ? string_duplicate(src->base_type) : NULL;
@@ -149,11 +178,6 @@ static char *get_llvm_type_string(type_info_t *type_info) {
     }
     
     return result;
-}
-
-// Get size of type in bytes
-static size_t get_type_size(type_info_t *type_info) {
-    return calculate_type_size(type_info, ctx.symbol_table);
 }
 
 // Generate struct type definition
@@ -322,9 +346,10 @@ static int generate_expression(ast_node_t *node) {
                     if (sym->type_info.pointer_level > 0) {
                         element_type[strlen(element_type) - 1] = '\0'; // Remove one *
                     }
+                    size_t array_length = get_array_length(sym, ctx.symbol_table);
                     fprintf(ctx.output, "  %%t%d = getelementptr [%zu x %s], [%zu x %s]* %%%s, i32 0, i32 0\n", 
-                            temp, sym->size / get_type_size(&sym->type_info), element_type,
-                            sym->size / get_type_size(&sym->type_info), element_type, sym->llvm_name);
+                            temp, array_length, element_type,
+                            array_length, element_type, sym->llvm_name);
                     free(element_type);
                 }
             } else {
@@ -574,7 +599,7 @@ static int generate_expression(ast_node_t *node) {
                                 fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n", 
                                         addr_temp, element_type, element_type, ptr_temp, index_str);
                             } else {
-                                size_t array_length = sym->size / get_type_size(&sym->type_info);
+                                size_t array_length = get_array_length(sym, ctx.symbol_table);
                                 fprintf(ctx.output, "  %%t%d = getelementptr [%zu x %s], [%zu x %s]* %%%s, i32 0, i32 %s\n", 
                                         addr_temp, array_length, element_type, array_length, element_type, 
                                         sym->llvm_name, index_str);
@@ -883,16 +908,10 @@ static int generate_expression(ast_node_t *node) {
                             fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n", 
                                     addr_temp, element_type, element_type, ptr_temp, index_str);
                         } else {
-                            if (sym->type_info.array_size && sym->type_info.array_size->type == AST_NUMBER) {
-                                size_t array_length = sym->type_info.array_size->data.number.value;
-                                fprintf(ctx.output, "  %%t%d = getelementptr [%zu x %s], [%zu x %s]* %%%s, i32 0, i32 %s\n", 
-                                        addr_temp, array_length, element_type, array_length, element_type, 
-                                        sym->llvm_name, index_str);
-                            } else {
-                                fprintf(stderr, "Cannot take address of incomplete array element\n");
-                                free(element_type);
-                                return -1;
-                            }
+                            size_t array_length = get_array_length(sym, ctx.symbol_table);
+                            fprintf(ctx.output, "  %%t%d = getelementptr [%zu x %s], [%zu x %s]* %%%s, i32 0, i32 %s\n", 
+                                    addr_temp, array_length, element_type, array_length, element_type, 
+                                    sym->llvm_name, index_str);
                         }
                     } else if (sym->type_info.pointer_level > 0) {
                         int ptr_temp = get_next_temp();
@@ -1357,7 +1376,7 @@ static void generate_statement(ast_node_t *node) {
                                 fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n", 
                                         addr_temp, element_type, element_type, ptr_temp, index_str);
                             } else {
-                                size_t array_length = sym->size / get_type_size(&sym->type_info);
+                                size_t array_length = get_array_length(sym, ctx.symbol_table);
                                 fprintf(ctx.output, "  %%t%d = getelementptr [%zu x %s], [%zu x %s]* %%%s, i32 0, i32 %s\n", 
                                         addr_temp, array_length, element_type, array_length, element_type, 
                                         sym->llvm_name, index_str);
