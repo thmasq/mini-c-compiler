@@ -1,6 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
 #include "symbol_table.h"
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -173,7 +172,7 @@ void enter_scope(symbol_table_t *table) {
     table->current_scope = new_scope;
 }
 
-static inline void free_scope(scope_t *scope) {
+void free_scope(scope_t *scope) {
     if (!scope) return;
     for (size_t i = 0; i < scope->bucket_count; i++) {
         symbol_t *sym = scope->buckets[i];
