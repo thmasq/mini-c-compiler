@@ -24,7 +24,7 @@
 #define BOOL_ALIGN 1
 
 // Utility function for string duplication
-static char *string_duplicate(const char *str) {
+static inline char *string_duplicate(const char *str) {
     if (!str) return NULL;
     size_t len = strlen(str) + 1;
     char *copy = malloc(len);
@@ -79,7 +79,7 @@ size_t symbol_table_hash(const char *src)
 */
 
 // Alignment calculation helper
-static size_t align_to(size_t size, size_t alignment) {
+static inline size_t align_to(size_t size, size_t alignment) {
     return (size + alignment - 1) & ~(alignment - 1);
 }
 
@@ -140,7 +140,7 @@ void free_symbol(symbol_t *sym) {
 
 /*
     // Clean up symbols in a scope
-    static void free_scope_symbols(symbol_t *symbols) {
+    static inline void free_scope_symbols(symbol_t *symbols) {
         symbol_t *sym = symbols;
         while (sym) {
             symbol_t *next = sym->next;
@@ -201,7 +201,7 @@ void exit_scope(symbol_table_t *table) {
 }
 
 // Calculate size of a basic type
-static size_t get_basic_type_size(const char *type_name) {
+static inline size_t get_basic_type_size(const char *type_name) {
     if (strcmp(type_name, "char") == 0) return CHAR_SIZE;
     if (strcmp(type_name, "short") == 0) return SHORT_SIZE;
     if (strcmp(type_name, "int") == 0) return INT_SIZE;
@@ -221,7 +221,7 @@ static size_t get_basic_type_size(const char *type_name) {
 }
 
 // Calculate alignment of a basic type
-static size_t get_basic_type_alignment(const char *type_name) {
+static inline size_t get_basic_type_alignment(const char *type_name) {
     if (strcmp(type_name, "char") == 0) return CHAR_ALIGN;
     if (strcmp(type_name, "short") == 0) return SHORT_ALIGN;
     if (strcmp(type_name, "int") == 0) return INT_ALIGN;
