@@ -238,7 +238,7 @@ jobs:
         
         # Test optimization levels
         for OPT in 0 1 2 3; do
-          ./minicc -O$OPT -c examples/sample.c -o /tmp/test_opt$OPT
+          ./minicc -O $OPT -c examples/sample.c -o /tmp/test_opt$OPT
           echo "✓ Optimization level -O$OPT works"
         done
 
