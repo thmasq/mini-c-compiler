@@ -1458,9 +1458,11 @@ static void generate_statement(ast_node_t *node) {
             if (!ctx.in_return_block) {
                 fprintf(ctx.output, "  br label %%%s\n", end_label);
             }
-            int then_returned = ctx.in_return_block;
+            int then_terminates = ctx.in_return_block;
             ctx.in_return_block = prev_return_state;
             exit_scope(ctx.symbol_table);
+            
+            int else_terminates = 0;
             
             if (node->data.if_stmt.else_stmt) {
                 fprintf(ctx.output, "%s:\n", else_label);
@@ -1471,12 +1473,20 @@ static void generate_statement(ast_node_t *node) {
                 if (!ctx.in_return_block) {
                     fprintf(ctx.output, "  br label %%%s\n", end_label);
                 }
-                int else_returned = ctx.in_return_block;
-                ctx.in_return_block = prev_return_state || (then_returned && else_returned);
+                else_terminates = ctx.in_return_block;
+                ctx.in_return_block = prev_return_state || (then_terminates && else_terminates);
                 exit_scope(ctx.symbol_table);
+            } else {
+                // No else block, so the 'else' path is not terminated
+                else_terminates = 0;
+                // Update context: reachable if 'then' branch wasn't taken
+                ctx.in_return_block = prev_return_state;
             }
             
-            fprintf(ctx.output, "%s:\n", end_label);
+            // Only print end_label if it's reachable from at least one branch
+            if (!then_terminates || !else_terminates) {
+                fprintf(ctx.output, "%s:\n", end_label);
+            }
             
             free(then_label);
             free(else_label);
