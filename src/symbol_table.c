@@ -150,6 +150,20 @@ void free_symbol(symbol_t *sym) {
     }
 */
 
+static inline void free_scope(scope_t *scope) {
+    if (!scope) return;
+    for (size_t i = 0; i < scope->bucket_count; i++) {
+        symbol_t *sym = scope->buckets[i];
+        while (sym) {
+            symbol_t *next = sym->next;
+            free_symbol(sym);
+            sym = next;
+        }
+    }
+    free(scope->buckets);
+    free(scope);
+}
+
 // Destroy symbol table and free all memory
 void destroy_symbol_table(symbol_table_t *table) {
     if (!table) return;
@@ -170,20 +184,6 @@ void destroy_symbol_table(symbol_table_t *table) {
 void enter_scope(symbol_table_t *table) {
     scope_t *new_scope = allocate_scope(++table->scope_counter, table->current_scope);
     table->current_scope = new_scope;
-}
-
-void free_scope(scope_t *scope) {
-    if (!scope) return;
-    for (size_t i = 0; i < scope->bucket_count; i++) {
-        symbol_t *sym = scope->buckets[i];
-        while (sym) {
-            symbol_t *next = sym->next;
-            free_symbol(sym);
-            sym = next;
-        }
-    }
-    free(scope->buckets);
-    free(scope);
 }
 
 // Exit current scope
