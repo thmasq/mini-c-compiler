@@ -10,7 +10,7 @@ static ast_node_t *create_node(ast_node_type_t type) {
         exit(1);
     }
     node->type = type;
-    node->line_number = 0;
+    node->line_number = line_number;
     node->column = 0;
     return node;
 }
