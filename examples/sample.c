@@ -38,16 +38,7 @@ int main() {
     
     // Test function calls
     int result = power(2, 4);
-    
-    // Test comparisons
-    if (sum == 30) {
-        return 1;
-    }
-    
-    if (product != 216) {
-        return 0;
-    }
-    
+
     // Test while loop with function call
     int counter = 5;
     while (counter > 0) {
