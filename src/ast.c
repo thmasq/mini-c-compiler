@@ -967,49 +967,6 @@ static void traverse_function(ast_node_t *node, symbol_table_t *table) {
     exit_scope(table);
 }
 
-static void traverse_declaration(ast_node_t *node, symbol_table_t *table) {
-    if (!node) return;
-    
-    if (node->data.declaration.init) {
-        traverse_node(node->data.declaration.init, table);
-    }
-
-    if (add_symbol(table, node->data.declaration.name, SYM_VARIABLE, node->data.declaration.type_info) == NULL) {
-        error_count++;
-    }
-}
-
-static void traverse_identifier(ast_node_t *node, symbol_table_t *table) {
-    if (!node) return;
-
-    symbol_t *symbol = find_symbol(table, node->data.identifier.name);
-    if (symbol == NULL) {
-        fprintf(stderr, "Semantic Error: Use of undeclared identifier '%s' at line %d\n", node->data.identifier.name, node->line_number);
-        error_count++;
-    } else {
-        free_type_info(&node->data.identifier.type);
-        node->data.identifier.type = deep_copy_type_info(&symbol->type_info);
-    }
-}
-
-static void traverse_assignment(ast_node_t *node, symbol_table_t *table) {
-    if (!node) return;
-
-    traverse_node(node->data.assignment.lvalue, table);
-    traverse_node(node->data.assignment.value, table);
-
-    type_info_t lvalue_type = get_expression_type(node->data.assignment.lvalue, table);
-    type_info_t rvalue_type = get_expression_type(node->data.assignment.value, table);
-
-    if (is_integer_type(&lvalue_type) && rvalue_type.pointer_level > 0) {
-         fprintf(stderr, "Semantic Error: Assigning a pointer to an integer variable at line %d\n", node->line_number);
-         error_count++;
-    }
-
-    free_type_info(&lvalue_type);
-    free_type_info(&rvalue_type);
-}
-
 static void traverse_compound_statement(ast_node_t *node, symbol_table_t *table) {
     if (!node) return;
 
@@ -1020,10 +977,459 @@ static void traverse_compound_statement(ast_node_t *node, symbol_table_t *table)
     exit_scope(table);
 }
 
+static void traverse_declaration(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    if (node->data.declaration.init) {
+        traverse_node(node->data.declaration.init, table);
+    }
+
+    if (add_symbol(table, node->data.declaration.name, SYM_VARIABLE, 
+                   node->data.declaration.type_info) == NULL) {
+        error_count++;
+    }
+}
+
+static void traverse_array_declaration(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    if (node->data.array_decl.size && node->data.array_decl.is_vla) {
+        traverse_node(node->data.array_decl.size, table);
+    }
+
+    if (add_symbol(table, node->data.array_decl.name, SYM_VARIABLE, 
+                   node->data.array_decl.type_info) == NULL) {
+        error_count++;
+    }
+}
+
+static void traverse_struct_decl(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    if (node->data.struct_decl.is_definition) {
+        type_info_t struct_type = create_type_info(
+            string_duplicate(node->data.struct_decl.name), 0, 0, NULL);
+        struct_type.is_struct = 1;
+        
+        symbol_t *struct_sym = add_symbol(table, node->data.struct_decl.name, 
+                                         SYM_STRUCT, struct_type);
+        
+        if (struct_sym) {
+            member_info_t *member = node->data.struct_decl.members;
+            while (member) {
+                symbol_t *member_sym = create_symbol(member->name, SYM_VARIABLE, 
+                                                    member->type);
+                member_sym->size = calculate_type_size(&member->type, table);
+                member_sym->alignment = calculate_type_alignment(&member->type, table);
+                
+                add_struct_member(struct_sym, member_sym);
+                member = member->next;
+            }
+            
+            calculate_struct_offsets(struct_sym);
+        }
+        
+        free_type_info(&struct_type);
+    }
+}
+
+static void traverse_union_decl(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    if (node->data.union_decl.is_definition) {
+        type_info_t union_type = create_type_info(
+            string_duplicate(node->data.union_decl.name), 0, 0, NULL);
+        union_type.is_union = 1;
+        
+        symbol_t *union_sym = add_symbol(table, node->data.union_decl.name, 
+                                        SYM_UNION, union_type);
+        
+        if (union_sym) {
+            member_info_t *member = node->data.union_decl.members;
+            while (member) {
+                symbol_t *member_sym = create_symbol(member->name, SYM_VARIABLE, 
+                                                    member->type);
+                member_sym->size = calculate_type_size(&member->type, table);
+                member_sym->alignment = calculate_type_alignment(&member->type, table);
+                
+                add_struct_member(union_sym, member_sym);
+                member = member->next;
+            }
+            
+            calculate_struct_offsets(union_sym);
+        }
+        
+        free_type_info(&union_type);
+    }
+}
+
+static void traverse_enum_decl(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    if (node->data.enum_decl.is_definition) {
+        type_info_t enum_type = create_type_info(
+            string_duplicate(node->data.enum_decl.name), 0, 0, NULL);
+        enum_type.is_enum = 1;
+        
+        add_symbol(table, node->data.enum_decl.name, SYM_ENUM, enum_type);
+        
+        enum_value_t *value = node->data.enum_decl.values;
+        int current_value = 0;
+        
+        while (value) {
+            if (value->value_expr) {
+                traverse_node(value->value_expr, table);
+                // TODO: evaluate constant expression
+                current_value = value->value;
+            } else {
+                value->value = current_value;
+            }
+            
+            add_enum_constant(table, value->name, value->value);
+            current_value = value->value + 1;
+            value = value->next;
+        }
+        
+        free_type_info(&enum_type);
+    }
+}
+
+static void traverse_typedef(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    if (add_symbol(table, node->data.typedef_decl.name, SYM_TYPEDEF, 
+                   node->data.typedef_decl.type) == NULL) {
+        error_count++;
+    }
+}
+
+static void traverse_identifier(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+
+    symbol_t *symbol = find_symbol(table, node->data.identifier.name);
+    if (symbol == NULL) {
+        fprintf(stderr, "Semantic Error: Use of undeclared identifier '%s' at line %d\n", 
+                node->data.identifier.name, node->line_number);
+        error_count++;
+    } else {
+        free_type_info(&node->data.identifier.type);
+        node->data.identifier.type = deep_copy_type_info(&symbol->type_info);
+    }
+}
+
+static void traverse_assignment(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+
+    if (node->data.assignment.name) {
+        symbol_t *sym = find_symbol(table, node->data.assignment.name);
+        if (!sym) {
+            fprintf(stderr, "Semantic Error: Assignment to undeclared variable '%s' at line %d\n",
+                    node->data.assignment.name, node->line_number);
+            error_count++;
+        }
+    } else if (node->data.assignment.lvalue) {
+        traverse_node(node->data.assignment.lvalue, table);
+    }
+
+    traverse_node(node->data.assignment.value, table);
+
+    if (node->data.assignment.lvalue) {
+        type_info_t lvalue_type = get_expression_type(node->data.assignment.lvalue, table);
+        type_info_t rvalue_type = get_expression_type(node->data.assignment.value, table);
+
+        if (is_integer_type(&lvalue_type) && rvalue_type.pointer_level > 0) {
+            fprintf(stderr, "Semantic Error: Assigning pointer to integer at line %d\n", 
+                    node->line_number);
+            error_count++;
+        }
+
+        free_type_info(&lvalue_type);
+        free_type_info(&rvalue_type);
+    }
+}
+
+static void traverse_call(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    symbol_t *func_sym = find_symbol(table, node->data.call.name);
+    if (!func_sym) {
+        fprintf(stderr, "Semantic Error: Call to undeclared function '%s' at line %d\n",
+                node->data.call.name, node->line_number);
+        error_count++;
+    } else if (func_sym->sym_type != SYM_FUNCTION) {
+        fprintf(stderr, "Semantic Error: '%s' is not a function at line %d\n",
+                node->data.call.name, node->line_number);
+        error_count++;
+    } else {
+        if (node->data.call.arg_count != func_sym->param_count && !func_sym->is_variadic) {
+            fprintf(stderr, "Semantic Error: Function '%s' expects %d arguments, got %d at line %d\n",
+                    node->data.call.name, func_sym->param_count, 
+                    node->data.call.arg_count, node->line_number);
+            error_count++;
+        }
+        
+        free_type_info(&node->data.call.return_type);
+        node->data.call.return_type = deep_copy_type_info(&func_sym->type_info);
+    }
+    
+    for (int i = 0; i < node->data.call.arg_count; i++) {
+        traverse_node(node->data.call.args[i], table);
+    }
+}
+
+static void traverse_binary_op(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    traverse_node(node->data.binary_op.left, table);
+    traverse_node(node->data.binary_op.right, table);
+    
+    type_info_t left_type = get_expression_type(node->data.binary_op.left, table);
+    type_info_t right_type = get_expression_type(node->data.binary_op.right, table);
+    
+    free_type_info(&node->data.binary_op.result_type);
+    
+    if (node->data.binary_op.op >= OP_EQ && node->data.binary_op.op <= OP_GE) {
+        node->data.binary_op.result_type = create_type_info(string_duplicate("_Bool"), 0, 0, NULL);
+    }
+    else if (node->data.binary_op.op == OP_LAND || node->data.binary_op.op == OP_LOR) {
+        node->data.binary_op.result_type = create_type_info(string_duplicate("_Bool"), 0, 0, NULL);
+    }
+    else {
+        node->data.binary_op.result_type = perform_usual_arithmetic_conversions(&left_type, &right_type);
+    }
+    
+    free_type_info(&left_type);
+    free_type_info(&right_type);
+}
+
+static void traverse_unary_op(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    traverse_node(node->data.unary_op.operand, table);
+    
+    type_info_t operand_type = get_expression_type(node->data.unary_op.operand, table);
+    
+    free_type_info(&node->data.unary_op.result_type);
+    
+    if (node->data.unary_op.op == OP_NOT) {
+        node->data.unary_op.result_type = create_type_info(string_duplicate("_Bool"), 0, 0, NULL);
+    }
+    else {
+        node->data.unary_op.result_type = perform_integer_promotions(&operand_type);
+    }
+    
+    free_type_info(&operand_type);
+}
+
+static void traverse_conditional(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    traverse_node(node->data.conditional.condition, table);
+    traverse_node(node->data.conditional.true_expr, table);
+    traverse_node(node->data.conditional.false_expr, table);
+    
+    type_info_t true_type = get_expression_type(node->data.conditional.true_expr, table);
+    type_info_t false_type = get_expression_type(node->data.conditional.false_expr, table);
+    
+    free_type_info(&node->data.conditional.result_type);
+    node->data.conditional.result_type = perform_usual_arithmetic_conversions(&true_type, &false_type);
+    
+    free_type_info(&true_type);
+    free_type_info(&false_type);
+}
+
+static void traverse_address_of(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    traverse_node(node->data.address_of.operand, table);
+    
+    type_info_t operand_type = get_expression_type(node->data.address_of.operand, table);
+    
+    free_type_info(&node->data.address_of.result_type);
+    node->data.address_of.result_type = operand_type;
+    node->data.address_of.result_type.pointer_level++;
+}
+
+static void traverse_dereference(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    traverse_node(node->data.dereference.operand, table);
+    
+    type_info_t operand_type = get_expression_type(node->data.dereference.operand, table);
+    
+    free_type_info(&node->data.dereference.result_type);
+    node->data.dereference.result_type = operand_type;
+    
+    if (node->data.dereference.result_type.pointer_level > 0) {
+        node->data.dereference.result_type.pointer_level--;
+    } else {
+        fprintf(stderr, "Semantic Error: Dereferencing non-pointer type at line %d\n", 
+                node->line_number);
+        error_count++;
+    }
+}
+
+static void traverse_array_access(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    traverse_node(node->data.array_access.array, table);
+    traverse_node(node->data.array_access.index, table);
+    
+    type_info_t array_type = get_expression_type(node->data.array_access.array, table);
+    
+    free_type_info(&node->data.array_access.element_type);
+    node->data.array_access.element_type = array_type;
+    
+    if (node->data.array_access.element_type.is_array) {
+        node->data.array_access.element_type.is_array = 0;
+    } else if (node->data.array_access.element_type.pointer_level > 0) {
+        node->data.array_access.element_type.pointer_level--;
+    } else {
+        fprintf(stderr, "Semantic Error: Array subscript on non-array/pointer at line %d\n", 
+                node->line_number);
+        error_count++;
+    }
+}
+
+static void traverse_member_access(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    traverse_node(node->data.member_access.object, table);
+    
+    type_info_t object_type = get_expression_type(node->data.member_access.object, table);
+    
+    if (!object_type.is_struct && !object_type.is_union) {
+        fprintf(stderr, "Semantic Error: Member access on non-struct/union at line %d\n", 
+                node->line_number);
+        error_count++;
+        free_type_info(&object_type);
+        return;
+    }
+    
+    symbol_t *struct_sym = find_symbol(table, object_type.base_type);
+    if (!struct_sym) {
+        fprintf(stderr, "Semantic Error: Unknown struct/union type '%s' at line %d\n", 
+                object_type.base_type, node->line_number);
+        error_count++;
+        free_type_info(&object_type);
+        return;
+    }
+    
+    symbol_t *member = find_struct_member(struct_sym, node->data.member_access.member);
+    if (!member) {
+        fprintf(stderr, "Semantic Error: No member '%s' in struct/union '%s' at line %d\n",
+                node->data.member_access.member, object_type.base_type, node->line_number);
+        error_count++;
+        free_type_info(&object_type);
+        return;
+    }
+    
+    free_type_info(&node->data.member_access.member_type);
+    node->data.member_access.member_type = deep_copy_type_info(&member->type_info);
+    node->data.member_access.member_offset = member->offset;
+    
+    free_type_info(&object_type);
+}
+
+static void traverse_ptr_member_access(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    traverse_node(node->data.ptr_member_access.object, table);
+    
+    type_info_t object_type = get_expression_type(node->data.ptr_member_access.object, table);
+    
+    if (object_type.pointer_level == 0) {
+        fprintf(stderr, "Semantic Error: Pointer member access on non-pointer at line %d\n", 
+                node->line_number);
+        error_count++;
+        free_type_info(&object_type);
+        return;
+    }
+    
+    if (!object_type.is_struct && !object_type.is_union) {
+        fprintf(stderr, "Semantic Error: Pointer member access on pointer to non-struct/union at line %d\n", 
+                node->line_number);
+        error_count++;
+        free_type_info(&object_type);
+        return;
+    }
+    
+    symbol_t *struct_sym = find_symbol(table, object_type.base_type);
+    if (!struct_sym) {
+        fprintf(stderr, "Semantic Error: Unknown struct/union type '%s' at line %d\n", 
+                object_type.base_type, node->line_number);
+        error_count++;
+        free_type_info(&object_type);
+        return;
+    }
+    
+    symbol_t *member = find_struct_member(struct_sym, node->data.ptr_member_access.member);
+    if (!member) {
+        fprintf(stderr, "Semantic Error: No member '%s' in struct/union '%s' at line %d\n",
+                node->data.ptr_member_access.member, object_type.base_type, node->line_number);
+        error_count++;
+        free_type_info(&object_type);
+        return;
+    }
+    
+    free_type_info(&node->data.ptr_member_access.member_type);
+    node->data.ptr_member_access.member_type = deep_copy_type_info(&member->type_info);
+    node->data.ptr_member_access.member_offset = member->offset;
+    
+    free_type_info(&object_type);
+}
+
+static void traverse_return_stmt(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    if (node->data.return_stmt.value) {
+        traverse_node(node->data.return_stmt.value, table);
+        
+        symbol_t *func = get_current_function(table);
+        if (func) {
+            type_info_t return_type = get_expression_type(node->data.return_stmt.value, table);
+            
+            if (!is_compatible_type(&func->type_info, &return_type)) {
+                fprintf(stderr, "Semantic Warning: Return type mismatch at line %d\n", 
+                        node->line_number);
+            }
+            
+            free_type_info(&return_type);
+        }
+    }
+}
+
+static void traverse_label_stmt(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    symbol_t *label = add_label(table, node->data.label_stmt.label);
+    if (!label) {
+        fprintf(stderr, "Semantic Error: Label '%s' already defined at line %d\n",
+                node->data.label_stmt.label, node->line_number);
+        error_count++;
+    }
+    
+    traverse_node(node->data.label_stmt.statement, table);
+}
+
+static void traverse_goto_stmt(ast_node_t *node, symbol_table_t *table) {
+    if (!node) return;
+    
+    symbol_t *label = find_label(table, node->data.goto_stmt.label);
+    if (!label) {
+        label = add_label(table, node->data.goto_stmt.label);
+        if (label) {
+            label->label_defined = 0;
+        }
+    }
+}
+
+
 static void traverse_node(ast_node_t *node, symbol_table_t *table) {
     if (!node) return;
 
     switch (node->type) {
+        // --- Top Level & Scoping ---
         case AST_PROGRAM:
             traverse_program(node, table);
             break;
@@ -1033,16 +1439,28 @@ static void traverse_node(ast_node_t *node, symbol_table_t *table) {
         case AST_COMPOUND_STMT:
             traverse_compound_statement(node, table);
             break;
+
+        // --- Declarations (Symbol-creating) ---
         case AST_DECLARATION:
             traverse_declaration(node, table);
             break;
-        case AST_IDENTIFIER:
-            traverse_identifier(node, table);
+        case AST_ARRAY_DECL:
+            traverse_array_declaration(node, table);
             break;
-        case AST_ASSIGNMENT:
-            traverse_assignment(node, table);
+        case AST_STRUCT_DECL:
+            traverse_struct_decl(node, table);
             break;
-        
+        case AST_UNION_DECL:
+            traverse_union_decl(node, table);
+            break;
+        case AST_ENUM_DECL:
+            traverse_enum_decl(node, table);
+            break;
+        case AST_TYPEDEF:
+            traverse_typedef(node, table);
+            break;
+
+        // --- Statements (Control Flow) ---
         case AST_IF_STMT:
             traverse_node(node->data.if_stmt.condition, table);
             traverse_node(node->data.if_stmt.then_stmt, table);
@@ -1052,38 +1470,118 @@ static void traverse_node(ast_node_t *node, symbol_table_t *table) {
             traverse_node(node->data.while_stmt.condition, table);
             traverse_node(node->data.while_stmt.body, table);
             break;
+        case AST_FOR_STMT:
+            enter_scope(table); // for-loops have their own scope for init
+            traverse_node(node->data.for_stmt.init, table);
+            traverse_node(node->data.for_stmt.condition, table);
+            traverse_node(node->data.for_stmt.update, table);
+            traverse_node(node->data.for_stmt.body, table);
+            exit_scope(table);
+            break;
+        case AST_DO_WHILE_STMT:
+            traverse_node(node->data.do_while_stmt.body, table);
+            traverse_node(node->data.do_while_stmt.condition, table);
+            break;
+        case AST_SWITCH_STMT:
+            traverse_node(node->data.switch_stmt.expression, table);
+            traverse_node(node->data.switch_stmt.body, table);
+            break;
+        case AST_CASE_STMT:
+            traverse_node(node->data.case_stmt.value, table);
+            traverse_node(node->data.case_stmt.statement, table);
+            break;
+        case AST_DEFAULT_STMT:
+            traverse_node(node->data.default_stmt.statement, table);
+            break;
+        case AST_RETURN_STMT:
+            traverse_return_stmt(node, table);
+            break;
         case AST_EXPR_STMT:
             traverse_node(node->data.expr_stmt.expr, table);
             break;
-        case AST_CALL:
-            if (node->data.call.name) {
-                //check if the name is a declared function
-            }
-            for (int i = 0; i < node->data.call.arg_count; i++) {
-                traverse_node(node->data.call.args[i], table);
-            }
+        case AST_LABEL_STMT:
+            traverse_label_stmt(node, table);
             break;
-        case AST_RETURN_STMT:
-            traverse_node(node->data.return_stmt.value, table);
+        case AST_GOTO_STMT:
+            traverse_goto_stmt(node, table);
+            break;
+        case AST_BREAK_STMT:
+        case AST_CONTINUE_STMT:
+        case AST_EMPTY_STMT:
+            // No children to traverse
             break;
 
+        // --- Expressions (Recursive) ---
+        case AST_ASSIGNMENT:
+            traverse_assignment(node, table);
+            break;
+        case AST_CALL:
+            traverse_call(node, table);
+            break;
+        case AST_BINARY_OP:
+            traverse_binary_op(node, table);
+            break;
+        case AST_UNARY_OP:
+            traverse_unary_op(node, table);
+            break;
+        case AST_CONDITIONAL:
+            traverse_conditional(node, table);
+            break;
+        case AST_CAST:
+            traverse_node(node->data.cast.expression, table);
+            break;
+        case AST_SIZEOF:
+            if (!node->data.sizeof_op.is_type) {
+                traverse_node(node->data.sizeof_op.operand, table);
+            }
+            // Calculate size
+            if (node->data.sizeof_op.is_type) {
+                // Size is based on type - would need type info
+                node->data.sizeof_op.size_value = 4; // placeholder
+            } else {
+                type_info_t expr_type = get_expression_type(node->data.sizeof_op.operand, table);
+                node->data.sizeof_op.size_value = calculate_type_size(&expr_type, table);
+                free_type_info(&expr_type);
+            }
+            break;
+        case AST_ADDRESS_OF:
+            traverse_address_of(node, table);
+            break;
+        case AST_DEREFERENCE:
+            traverse_dereference(node, table);
+            break;
+        case AST_ARRAY_ACCESS:
+            traverse_array_access(node, table);
+            break;
+        case AST_MEMBER_ACCESS:
+            traverse_member_access(node, table);
+            break;
+        case AST_PTR_MEMBER_ACCESS:
+            traverse_ptr_member_access(node, table);
+            break;
+        case AST_INITIALIZER_LIST:
+            for (int i = 0; i < node->data.initializer_list.count; i++) {
+                traverse_node(node->data.initializer_list.values[i], table);
+            }
+            break;
+
+        // --- Terminals (Base Cases) ---
+        case AST_IDENTIFIER:
+            traverse_identifier(node, table);
+            break;
         case AST_NUMBER:
         case AST_STRING_LITERAL:
         case AST_CHARACTER:
+        case AST_PARAMETER: // Already handled in traverse_function
+            // No children to traverse
             break;
-
+            
         default:
+            fprintf(stderr, "Warning: Unhandled AST node type in traversal: %d\n", node->type);
             break;
     }
 }
 
-/**
- * @brief Performs type checking and semantic analysis by traversing the AST.
- * 
- * @param ast The root of the AST to check.
- * @param table The global symbol table.
- * @return int 1 on success, 0 on failure (if errors were found).
- */
 int check_types(ast_node_t *ast, symbol_table_t *table) {
     if (!ast || !table) return 0;
 
@@ -1095,24 +1593,15 @@ int check_types(ast_node_t *ast, symbol_table_t *table) {
 int check_expression_types(ast_node_t *expr, symbol_table_t *table) {
     if (!expr) return 1;
 
-    // Simplified type checking - just verify identifiers exist
-    if (expr->type == AST_IDENTIFIER) {
-        symbol_t *sym = find_symbol(table, expr->data.identifier.name);
-        if (!sym) {
-            fprintf(stderr, "Undefined identifier: %s\n", expr->data.identifier.name);
-            return 0;
-        }
-        expr->data.identifier.type = sym->type_info;
-        return 1;
-    }
-    return 1; // For now, accept all other expressions
+    traverse_node(expr, table);
+    return error_count == 0;
 }
 
 int check_statement_types(ast_node_t *stmt, symbol_table_t *table) {
     if (!stmt) return 1;
 
-    // Simplified statement type checking
-    return 1;
+    traverse_node(stmt, table);
+    return error_count == 0;
 }
 
 static const char* binop_str(binary_op_t op){
