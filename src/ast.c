@@ -928,6 +928,14 @@ static void traverse_program(ast_node_t *node, symbol_table_t *table) {
 static void traverse_function(ast_node_t *node, symbol_table_t *table) {
     if (!node) return;
     
+    symbol_t *func_sym = add_symbol(table, node->data.function.name, 
+                                   SYM_FUNCTION, node->data.function.return_type);
+    if (func_sym) {
+        func_sym->is_function_defined = (node->data.function.body != NULL);
+        func_sym->param_count = node->data.function.param_count;
+        func_sym->is_variadic = node->data.function.is_variadic;
+    }
+    
     enter_scope(table);
     set_current_function(table, node->data.function.name);
 
