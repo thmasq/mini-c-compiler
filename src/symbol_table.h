@@ -3,8 +3,10 @@
 
 #include "ast.h"
 
+#define SCOPE_BUCKETS 256
+
 // Symbol types
-typedef enum {
+typedef enum symbol_type {
     SYM_VARIABLE,
     SYM_FUNCTION,
     SYM_TYPEDEF,
@@ -61,13 +63,15 @@ typedef struct symbol {
     char *label_name;           // For goto labels
     int label_defined;
     
-    // Linked list
+    // Hash table bucket chaining
     struct symbol *next;
 } symbol_t;
 
 // Scope management
 typedef struct scope {
-    symbol_t *symbols;
+    symbol_t **buckets;
+    size_t bucket_count; // normally SCOPE_BUCKETS
+    size_t symbol_count;
     int level;
     struct scope *parent;
 } scope_t;
@@ -81,7 +85,7 @@ typedef struct symbol_table {
     char *current_function;
 } symbol_table_t;
 
-// Function prototypes
+// Main symbol table functions
 symbol_table_t *create_symbol_table(void);
 void destroy_symbol_table(symbol_table_t *table);
 
@@ -122,6 +126,8 @@ char *generate_unique_name(symbol_table_t *table, const char *base_name);
 int is_compatible_type(type_info_t *type1, type_info_t *type2);
 type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table);
 type_info_t deep_copy_type_info(const type_info_t *src);
+size_t symbol_table_hash(const char *src);
+// size_t symbol_table_nhash(const char *src, size_t size);
 
 // Memory management helpers
 void free_symbol(symbol_t *sym);

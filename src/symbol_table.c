@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "symbol_table.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,9 +58,42 @@ type_info_t deep_copy_type_info(const type_info_t *src) {
     return result;
 }
 
+size_t symbol_table_hash(const char *src)
+{
+    // Algorithm: djb2a hash function
+    size_t hash = 5381; // Magic constant: fewer collisions and better avalanche effect, apparently
+    char c;
+    while ((c = *src++))
+        hash = ((hash << 5) + hash) ^ c; // hash * 33 ^ c
+    return hash;
+}
+
+/*
+    size_t symbol_table_nhash(const char *src, size_t len)
+    {
+        // Algorithm: djb2a hash function
+        size_t hash = 5381;
+        for (size_t i = 0; i < len; i++)
+            hash = ((hash << 5) + hash) ^ src[i]; // hash * 33 ^ src[i]
+        return hash;
+    }
+*/
+
 // Alignment calculation helper
 static size_t align_to(size_t size, size_t alignment) {
     return (size + alignment - 1) & ~(alignment - 1);
+}
+
+static inline scope_t *allocate_scope(int level, scope_t *parent) {
+    scope_t *s = malloc(sizeof(scope_t));
+    if (!s) { fprintf(stderr, "Failed scope alloc\n"); exit(1); }
+    s->bucket_count = SCOPE_BUCKETS;
+    s->buckets = calloc(s->bucket_count, sizeof(symbol_t*));
+    if (!s->buckets) { fprintf(stderr, "Failed buckets alloc\n"); exit(1); }
+    s->symbol_count = 0;
+    s->level = level;
+    s->parent = parent;
+    return s;
 }
 
 // Create a new symbol table
@@ -71,8 +105,7 @@ symbol_table_t *create_symbol_table(void) {
     }
     
     // Create global scope
-    table->global_scope = malloc(sizeof(scope_t));
-    table->global_scope->symbols = NULL;
+    table->global_scope = allocate_scope(0, NULL);
     table->global_scope->level = 0;
     table->global_scope->parent = NULL;
     
@@ -106,15 +139,17 @@ void free_symbol(symbol_t *sym) {
     free(sym);
 }
 
-// Clean up symbols in a scope
-static void free_scope_symbols(symbol_t *symbols) {
-    symbol_t *sym = symbols;
-    while (sym) {
-        symbol_t *next = sym->next;
-        free_symbol(sym);
-        sym = next;
+/*
+    // Clean up symbols in a scope
+    static void free_scope_symbols(symbol_t *symbols) {
+        symbol_t *sym = symbols;
+        while (sym) {
+            symbol_t *next = sym->next;
+            free_symbol(sym);
+            sym = next;
+        }
     }
-}
+*/
 
 // Destroy symbol table and free all memory
 void destroy_symbol_table(symbol_table_t *table) {
@@ -126,8 +161,7 @@ void destroy_symbol_table(symbol_table_t *table) {
     }
     
     // Clean up global scope
-    free_scope_symbols(table->global_scope->symbols);
-    free(table->global_scope);
+    free_scope(table->global_scope);
     
     free(table->current_function);
     free(table);
@@ -135,11 +169,22 @@ void destroy_symbol_table(symbol_table_t *table) {
 
 // Enter a new scope
 void enter_scope(symbol_table_t *table) {
-    scope_t *new_scope = malloc(sizeof(scope_t));
-    new_scope->symbols = NULL;
-    new_scope->level = ++table->scope_counter;
-    new_scope->parent = table->current_scope;
+    scope_t *new_scope = allocate_scope(++table->scope_counter, table->current_scope);
     table->current_scope = new_scope;
+}
+
+static inline void free_scope(scope_t *scope) {
+    if (!scope) return;
+    for (size_t i = 0; i < scope->bucket_count; i++) {
+        symbol_t *sym = scope->buckets[i];
+        while (sym) {
+            symbol_t *next = sym->next;
+            free_symbol(sym);
+            sym = next;
+        }
+    }
+    free(scope->buckets);
+    free(scope);
 }
 
 // Exit current scope
@@ -153,8 +198,7 @@ void exit_scope(symbol_table_t *table) {
     table->scope_counter--;
     
     // Free all symbols in the exiting scope
-    free_scope_symbols(old_scope->symbols);
-    free(old_scope);
+    free_scope(old_scope);
 }
 
 // Calculate size of a basic type
@@ -428,11 +472,17 @@ char *generate_unique_name(symbol_table_t *table, const char *base_name) {
 
 // Add symbol to current scope
 symbol_t *add_symbol(symbol_table_t *table, const char *name, symbol_type_t sym_type, type_info_t type_info) {
+    size_t h = symbol_table_hash(name);
+    size_t idx = h % table->current_scope->bucket_count;
+    
     // Check if symbol already exists in current scope
-    symbol_t *existing = find_symbol_in_scope(table->current_scope, name);
-    if (existing) {
-        fprintf(stderr, "Symbol '%s' already defined in current scope\n", name);
-        return NULL;
+    symbol_t *cur = table->current_scope->buckets[idx];
+    while (cur) {
+        if (strcmp(cur->name, name) == 0) {
+            fprintf(stderr, "Symbol '%s' already defined in scope %d\n", name, table->current_scope->level);
+            return NULL;
+        }
+        cur = cur->next;
     }
     
     symbol_t *sym = create_symbol(name, sym_type, type_info);
@@ -452,9 +502,10 @@ symbol_t *add_symbol(symbol_table_t *table, const char *name, symbol_type_t sym_
         sym->alignment = calculate_type_alignment(&sym->type_info, table);
     }
     
-    // Add to current scope
-    sym->next = table->current_scope->symbols;
-    table->current_scope->symbols = sym;
+    // Push forward into the bucket list
+    sym->next = table->current_scope->buckets[idx];
+    table->current_scope->buckets[idx] = sym;
+    table->current_scope->symbol_count++;
     
     return sym;
 }
@@ -476,7 +527,9 @@ symbol_t *find_symbol(symbol_table_t *table, const char *name) {
 
 // Find symbol in specific scope
 symbol_t *find_symbol_in_scope(scope_t *scope, const char *name) {
-    symbol_t *sym = scope->symbols;
+    size_t h = symbol_table_hash(name);
+    size_t idx = h % scope->bucket_count;
+    symbol_t *sym = scope->buckets[idx];
     
     while (sym) {
         if (strcmp(sym->name, name) == 0) {
@@ -578,12 +631,14 @@ symbol_t *find_label(symbol_table_t *table, const char *label_name) {
     scope_t *scope = table->current_scope;
     
     while (scope) {
-        symbol_t *sym = scope->symbols;
-        while (sym) {
-            if (sym->sym_type == SYM_LABEL && strcmp(sym->name, label_name) == 0) {
-                return sym;
+        for (size_t i = 0; i < scope->bucket_count; i++) {
+            symbol_t *sym = scope->buckets[i];
+            while (sym) {
+                if (sym->sym_type == SYM_LABEL && strcmp(sym->name, label_name) == 0) {
+                    return sym;
+                }
+                sym = sym->next;
             }
-            sym = sym->next;
         }
         scope = scope->parent;
     }
@@ -695,11 +750,15 @@ void print_symbol_table(symbol_table_t *table) {
     scope_t *scope = table->current_scope;
     
     while (scope) {
-        printf("Scope level %d:\n", scope->level);
-        symbol_t *sym = scope->symbols;
-        while (sym) {
-            print_symbol(sym, 2);
-            sym = sym->next;
+        printf("Scope %d (symbols=%zu):\n", scope->level, scope->symbol_count);
+        for (size_t i = 0; i < scope->bucket_count; i++) {
+            symbol_t *sym = scope->buckets[i];
+            if (!sym) continue;
+            printf("  [bucket %zu]\n", i);
+            while (sym) {
+                print_symbol(sym, 4);
+                sym = sym->next;
+            }
         }
         scope = scope->parent;
     }
