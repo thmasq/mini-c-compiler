@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "ast.h"
 #include "symbol_table.h"
+#include "common.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,19 +35,33 @@ typedef struct {
 
 static codegen_context_t ctx;
 
-// Portable string duplication function
-static char *string_duplicate(const char *str) {
-    if (!str) return NULL;
-    size_t len = strlen(str) + 1;
-    char *copy = malloc(len);
-    if (!copy) {
-        fprintf(stderr, "Memory allocation failed\n");
-        exit(1);
-    }
-    strcpy(copy, str);
-    return copy;
+// Memory management helpers
+#define CLEANUP_AND_RETURN(type_var, ret_val) \
+    do { free_type_info(&(type_var)); return (ret_val); } while(0)
+
+#define FREE_AND_RETURN(ptr, ret_val) \
+    do { free(ptr); return (ret_val); } while(0)
+
+#define CLEANUP_TYPE_AND_FREE(type_var, ptr, ret_val) \
+    do { free_type_info(&(type_var)); free(ptr); return (ret_val); } while(0)
+
+typedef struct {
+    char *str;
+} type_string_t;
+
+static inline type_string_t make_type_string(char *s) {
+    type_string_t ts = { .str = s };
+    return ts;
 }
 
+static inline void free_type_string(type_string_t *ts) {
+    if (ts && ts->str) {
+        free(ts->str);
+        ts->str = NULL;
+    }
+}
+
+// Helper functions
 static size_t get_basic_type_size(const char *type_name) {
     if (!type_name) return 4;
     if (strcmp(type_name, "char") == 0) return 1;
@@ -57,13 +72,11 @@ static size_t get_basic_type_size(const char *type_name) {
     if (strcmp(type_name, "double") == 0) return 8;
     if (strcmp(type_name, "_Bool") == 0) return 1;
     if (strstr(type_name, "int")) return 4;
-    return 4; // default
+    return 4;
 }
 
 static size_t get_array_length(symbol_t *sym, symbol_table_t *table) {
-    if (!sym || !sym->type_info.is_array) {
-        return 0;
-    }
+    if (!sym || !sym->type_info.is_array) return 0;
     
     if (sym->type_info.array_size && sym->type_info.array_size->type == AST_NUMBER) {
         return sym->type_info.array_size->data.number.value;
@@ -72,37 +85,19 @@ static size_t get_array_length(symbol_t *sym, symbol_table_t *table) {
     size_t element_size = get_basic_type_size(sym->type_info.base_type);
     if (element_size == 0) element_size = 4; // default to int size
     
-    size_t array_length = (element_size > 0) ? (sym->size / element_size) : 0;
-    return array_length;
+    return (element_size > 0) ? (sym->size / element_size) : 0;
 }
 
-static type_info_t deep_copy_type_info_codegen(const type_info_t *src) {
-    type_info_t result;
-    result.base_type = src->base_type ? string_duplicate(src->base_type) : NULL;
-    result.pointer_level = src->pointer_level;
-    result.is_array = src->is_array;
-    result.is_vla = src->is_vla;
-    result.is_function = src->is_function;
-    result.is_struct = src->is_struct;
-    result.is_union = src->is_union;
-    result.is_enum = src->is_enum;
-    result.is_incomplete = src->is_incomplete;
-    result.storage_class = src->storage_class;
-    result.qualifiers = src->qualifiers;
-    result.array_size = NULL; // Don't copy AST nodes - they're managed separately
-    result.param_types = NULL; // Don't copy param arrays - they're managed separately
-    result.param_count = src->param_count;
-    result.is_variadic = src->is_variadic;
-    return result;
-}
-
-// Helper functions
-static int get_next_temp() {
+static int get_next_temp(void) {
     return ++ctx.temp_counter;
 }
 
 static char *generate_label(const char *prefix) {
     char *label = malloc(64);
+    if (!label) {
+        fprintf(stderr, "Memory allocation failed\n");
+        exit(1);
+    }
     snprintf(label, 64, "%s%d", prefix, ++ctx.label_counter);
     return label;
 }
@@ -257,7 +252,7 @@ static int store_string_literal(const char *content) {
 }
 
 // Generate global string constants
-static void generate_string_constants() {
+static void generate_string_constants(void) {
     for (int i = 0; i < ctx.string_literal_count; i++) {
         const char *content = ctx.string_literals[i].content;
         int id = ctx.string_literals[i].id;
@@ -815,6 +810,7 @@ static int generate_expression(ast_node_t *node) {
                 // No cast needed
                 free(source_type_str);
                 free(target_type_str);
+                free_type_info(&source_type);
                 return operand;
             }
             
@@ -839,6 +835,7 @@ static int generate_expression(ast_node_t *node) {
             
             free(source_type_str);
             free(target_type_str);
+            free_type_info(&source_type);
             return temp;
         }
         
@@ -992,7 +989,7 @@ static int generate_expression(ast_node_t *node) {
             return temp;
         }
         
-case AST_ARRAY_ACCESS: {
+        case AST_ARRAY_ACCESS: {
             // array[index] is equivalent to *(array + index)
             ast_node_t *array_node = node->data.array_access.array;
             ast_node_t *index_node = node->data.array_access.index;
@@ -1140,18 +1137,21 @@ case AST_ARRAY_ACCESS: {
             type_info_t ptr_type = get_expression_type(object, ctx.symbol_table);
             if (ptr_type.pointer_level == 0 || (!ptr_type.is_struct && !ptr_type.is_union)) {
                 fprintf(stderr, "Pointer member access on non-pointer-to-struct/union\n");
+                free_type_info(&ptr_type);
                 return -1;
             }
             
             symbol_t *struct_sym = find_symbol(ctx.symbol_table, ptr_type.base_type);
             if (!struct_sym) {
                 fprintf(stderr, "Unknown struct/union type: %s\n", ptr_type.base_type);
+                free_type_info(&ptr_type);
                 return -1;
             }
             
             symbol_t *member = find_struct_member(struct_sym, member_name);
             if (!member) {
                 fprintf(stderr, "Unknown member: %s\n", member_name);
+                free_type_info(&ptr_type);
                 return -1;
             }
             
@@ -1180,6 +1180,7 @@ case AST_ARRAY_ACCESS: {
             
             free(struct_type);
             free(member_type);
+            free_type_info(&ptr_type);
             return result_temp;
         }
         
@@ -1212,6 +1213,7 @@ case AST_ARRAY_ACCESS: {
                 }
                 
                 free(arg_type_str);
+                free_type_info(&arg_type);
             }
             
             fprintf(ctx.output, ")\n");
@@ -1773,7 +1775,9 @@ static void generate_statement(ast_node_t *node) {
             if (!label_sym) {
                 // Forward declaration of label
                 label_sym = add_label(ctx.symbol_table, node->data.goto_stmt.label);
-                label_sym->label_defined = 0; // Mark as forward reference
+                if (label_sym) {
+                    label_sym->label_defined = 0;
+                }
             }
             fprintf(ctx.output, "  br label %%%s\n", node->data.goto_stmt.label);
             ctx.in_return_block = 1;
@@ -1785,7 +1789,9 @@ static void generate_statement(ast_node_t *node) {
             if (!label_sym) {
                 label_sym = add_label(ctx.symbol_table, node->data.label_stmt.label);
             }
-            label_sym->label_defined = 1;
+            if (label_sym) {
+                label_sym->label_defined = 1;
+            }
             
             if (ctx.in_return_block) {
                 ctx.in_return_block = 0; // Label makes code reachable again
@@ -1894,7 +1900,7 @@ static void generate_function(ast_node_t *node) {
     ctx.current_function_name = string_duplicate(node->data.function.name);
     
     free_type_info(&ctx.current_function_return_type); // Free previous if any
-    ctx.current_function_return_type = deep_copy_type_info_codegen(&node->data.function.return_type);
+    ctx.current_function_return_type = deep_copy_type_info(&node->data.function.return_type);
     
     ctx.in_return_block = 0;
     

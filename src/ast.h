@@ -489,6 +489,15 @@ void free_member_info(member_info_t *member);
 void free_enum_value(enum_value_t *value);
 void free_case_label(case_label_t *label);
 
+#define CLEANUP_TYPE_INFO(var) \
+    do { free_type_info(&(var)); } while(0)
+
+#define AUTO_CLEANUP_TYPE __attribute__((cleanup(cleanup_type_wrapper)))
+
+static inline void cleanup_type_wrapper(type_info_t *t) {
+    free_type_info(t);
+}
+
 // Code generation
 void generate_llvm_ir(ast_node_t *ast, FILE *output);
 

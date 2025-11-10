@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "ast.h"
 #include "symbol_table.h"
+#include "common.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,19 +20,6 @@ symbol_table_t *global_symbol_table = NULL;
 // Error recovery globals
 int error_count = 0;
 int max_errors = 20;
-
-// Portable string duplication function
-static char *string_duplicate(const char *str) {
-    if (!str) return NULL;
-    size_t len = strlen(str) + 1;
-    char *copy = malloc(len);
-    if (!copy) {
-        fprintf(stderr, "Memory allocation failed\n");
-        exit(1);
-    }
-    strcpy(copy, str);
-    return copy;
-}
 
 // Helper to merge declaration specifiers and declarator with proper cleanup
 static type_info_t make_complete_type(type_info_t base_type, declarator_t decl) {

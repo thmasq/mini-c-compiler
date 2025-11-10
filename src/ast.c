@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "ast.h"
 #include "symbol_table.h"
+#include "common.h"
 
 // Helper function to create a new AST node
 static ast_node_t *create_node(ast_node_type_t type) {
@@ -13,19 +14,6 @@ static ast_node_t *create_node(ast_node_type_t type) {
     node->line_number = line_number;
     node->column = 0;
     return node;
-}
-
-// Portable string duplication function
-static char *string_duplicate(const char *str) {
-    if (!str) return NULL;
-    size_t len = strlen(str) + 1;
-    char *copy = malloc(len);
-    if (!copy) {
-        fprintf(stderr, "Memory allocation failed\n");
-        exit(1);
-    }
-    strcpy(copy, str);
-    return copy;
 }
 
 // Type info creation and management

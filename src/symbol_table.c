@@ -669,148 +669,121 @@ int is_compatible_type(type_info_t *type1, type_info_t *type2) {
 
 // Get expression type (returns a deep copy that must be freed)
 type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table) {
-    type_info_t default_type = create_type_info(string_duplicate("int"), 0, 0, NULL);
-    
-    if (!expr) return default_type;
+    if (!expr) {
+        return create_type_info(string_duplicate("int"), 0, 0, NULL);
+    }
     
     switch (expr->type) {
-        case AST_NUMBER: // integer literals decay to int
-            free_type_info(&default_type);
+        case AST_NUMBER:
             return create_type_info(string_duplicate("int"), 0, 0, NULL);
             
-        case AST_CHARACTER: // character literals decay to char
-            free_type_info(&default_type);
+        case AST_CHARACTER:
             return create_type_info(string_duplicate("char"), 0, 0, NULL);
             
-        case AST_STRING_LITERAL: // string literals decay to char*
-            free_type_info(&default_type);
-            return create_type_info(string_duplicate("char"), 1, 0, NULL); // char*
+        case AST_STRING_LITERAL:
+            return create_type_info(string_duplicate("char"), 1, 0, NULL);
             
         case AST_IDENTIFIER: {
             symbol_t *sym = find_symbol(table, expr->data.identifier.name);
             if (sym) {
-                free_type_info(&default_type);
                 return deep_copy_type_info(&sym->type_info);
             }
-            break;
+            return create_type_info(string_duplicate("int"), 0, 0, NULL);
         }
         
-        case AST_BINARY_OP: // operators +, -, *, /, %, ==, !=, <, >, <=, >=, &&, ||
-            // Most binary ops return int, comparisons return bool
+        case AST_BINARY_OP:
             if (expr->data.binary_op.op >= OP_EQ && expr->data.binary_op.op <= OP_GE) {
-                free_type_info(&default_type);
                 return create_type_info(string_duplicate("_Bool"), 0, 0, NULL);
             }
-            return default_type;
+            return create_type_info(string_duplicate("int"), 0, 0, NULL);
             
-        case AST_UNARY_OP: // operators +, -, !, ~
+        case AST_UNARY_OP:
             if (expr->data.unary_op.op == OP_NOT) {
-                free_type_info(&default_type);
                 return create_type_info(string_duplicate("_Bool"), 0, 0, NULL);
             } else {
-                type_info_t operand_type = get_expression_type(expr->data.unary_op.operand, table);
-                free_type_info(&default_type);
-                return operand_type;
+                return get_expression_type(expr->data.unary_op.operand, table);
             }
             
-        case AST_ADDRESS_OF: { // (prefixed) operator &
+        case AST_ADDRESS_OF: {
             type_info_t operand_type = get_expression_type(expr->data.address_of.operand, table);
             operand_type.pointer_level++;
-            free_type_info(&default_type);
             return operand_type;
         }
         
-        case AST_DEREFERENCE: { // operator *
+        case AST_DEREFERENCE: {
             type_info_t operand_type = get_expression_type(expr->data.dereference.operand, table);
             if (operand_type.pointer_level > 0) {
                 operand_type.pointer_level--;
             }
-            free_type_info(&default_type);
             return operand_type;
         }
 
         case AST_CALL: {
-            // Function calls return the function's return type
             symbol_t *func_sym = find_symbol(table, expr->data.call.name);
             if (func_sym) {
-                free_type_info(&default_type);
                 return deep_copy_type_info(&func_sym->type_info);
             }
-            break;
+            return create_type_info(string_duplicate("int"), 0, 0, NULL);
         }
 
-        case AST_ARRAY_ACCESS: { // operator []
+        case AST_ARRAY_ACCESS: {
             type_info_t array_type = get_expression_type(expr->data.array_access.array, table);
             if (array_type.pointer_level > 0) {
                 array_type.pointer_level--;
             }
-            free_type_info(&default_type);
             return array_type;
         }
 
-        case AST_MEMBER_ACCESS: { // operator .
+        case AST_MEMBER_ACCESS: {
             type_info_t struct_type = get_expression_type(expr->data.member_access.object, table);
 
-            // Type Validation: cannot be pointer (use -> for this)
             if (struct_type.pointer_level > 0) {
-                fprintf(stderr, "Error: Use '->' for pointer member access, not '.'\n"); // Debug message
+                fprintf(stderr, "Error: Use '->' for pointer member access, not '.'\n");
                 free_type_info(&struct_type);
-                break;
+                return create_type_info(string_duplicate("int"), 0, 0, NULL);
             }
             
             symbol_t *struct_sym = find_symbol(table, struct_type.base_type);
             if (struct_sym) {
                 symbol_t *member_sym = find_struct_member(struct_sym, expr->data.member_access.member);
                 if (member_sym) {
-                    free_type_info(&default_type);
+                    free_type_info(&struct_type);
                     return deep_copy_type_info(&member_sym->type_info);
                 }
             }
-            break;
+            free_type_info(&struct_type);
+            return create_type_info(string_duplicate("int"), 0, 0, NULL);
         }
 
-        case AST_CAST: { // (type) expression
-            free_type_info(&default_type);
+        case AST_CAST:
             return deep_copy_type_info(&expr->data.cast.target_type);
-        }
 
         case AST_CONDITIONAL: {
             type_info_t then_type = get_expression_type(expr->data.conditional.true_expr, table);
             type_info_t else_type = get_expression_type(expr->data.conditional.false_expr, table);
             
-            // C arithmetic promotion rule: int + double → double
             if (is_floating_type(&then_type) || is_floating_type(&else_type)) {
-                // Promote to float/double
-                type_info_t promoted = create_type_info(string_duplicate("double"), 0, 0, NULL);
                 free_type_info(&then_type);
                 free_type_info(&else_type);
-                free_type_info(&default_type);
-                return promoted;
+                return create_type_info(string_duplicate("double"), 0, 0, NULL);
             }
             
             if (is_compatible_type(&then_type, &else_type)) {
-                free_type_info(&default_type);
                 free_type_info(&else_type);
                 return then_type;
             }
             
             free_type_info(&then_type);
             free_type_info(&else_type);
-            break;
+            return create_type_info(string_duplicate("int"), 0, 0, NULL);
         }
 
-        case AST_SIZEOF: { // sizeof operator
-            // sizeof always returns size_t
-            type_info_t size_type = create_type_info(string_duplicate("size_t"), 0, 0, NULL);
-            free_type_info(&default_type);
-            return size_type;
-        }
+        case AST_SIZEOF:
+            return create_type_info(string_duplicate("size_t"), 0, 0, NULL);
 
-        case AST_PTR_MEMBER_ACCESS: { // operator ->
-            // Similar to AST_MEMBER_ACCESS but with pointer(s)
+        case AST_PTR_MEMBER_ACCESS: {
             type_info_t ptr_type = get_expression_type(expr->data.ptr_member_access.object, table);
             
-            // Implicit dereference: pointer -> struct
             if (ptr_type.pointer_level > 0) {
                 ptr_type.pointer_level--;
             }
@@ -819,34 +792,23 @@ type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table) {
             if (struct_sym) {
                 symbol_t *member_sym = find_struct_member(struct_sym, expr->data.ptr_member_access.member);
                 if (member_sym) {
-                    free_type_info(&default_type);
+                    free_type_info(&ptr_type);
                     return deep_copy_type_info(&member_sym->type_info);
                 }
             }
-            break;
+            free_type_info(&ptr_type);
+            return create_type_info(string_duplicate("int"), 0, 0, NULL);
         }
 
-        // TODO: Implement the AST_COMPOUND_ASSIGNMENT enum (case) in ast_node_t
-        /*
-            case AST_COMPOUND_ASSIGNMENT: {
-                // Returns the lvalue type
-                return get_expression_type(expr->data.compound_assignment.lvalue, table);
-            }
-        */
-
-        case AST_INITIALIZER_LIST: {
-            // Returns the type of the first element (or array)
+        case AST_INITIALIZER_LIST:
             if (expr->data.initializer_list.count > 0) {
                 return get_expression_type(expr->data.initializer_list.values[0], table);
             }
-            break;
-        }
+            return create_type_info(string_duplicate("int"), 0, 0, NULL);
         
-        default: // Unhandled cases
-            break;
+        default:
+            return create_type_info(string_duplicate("int"), 0, 0, NULL);
     }
-    
-    return default_type; // Fallback to int
 }
 
 // Clean up type_info in a symbol
