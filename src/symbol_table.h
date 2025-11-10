@@ -7,82 +7,82 @@
 
 // Symbol types
 typedef enum symbol_type {
-    SYM_VARIABLE,
-    SYM_FUNCTION,
-    SYM_TYPEDEF,
-    SYM_STRUCT,
-    SYM_UNION,
-    SYM_ENUM,
-    SYM_ENUM_CONSTANT,
-    SYM_LABEL
+	SYM_VARIABLE,
+	SYM_FUNCTION,
+	SYM_TYPEDEF,
+	SYM_STRUCT,
+	SYM_UNION,
+	SYM_ENUM,
+	SYM_ENUM_CONSTANT,
+	SYM_LABEL
 } symbol_type_t;
 
 // Symbol table entry with complete information
 typedef struct symbol {
-    char *name;
-    char *llvm_name;
-    symbol_type_t sym_type;
-    type_info_t type_info;
-    
-    // Scope and storage information
-    int scope_level;
-    int is_global;
-    int is_parameter;
-    int is_static;
-    int is_extern;
-    
-    // Size and offset information
-    size_t size;          // Size in bytes
-    size_t alignment;     // Alignment requirement
-    size_t offset;        // Offset in struct/union or stack frame
-    
-    // Array information
-    int is_array;
-    int array_len;
-    int array_dimensions;
-    size_t *array_sizes;  // Size of each dimension
-    int is_vla;
-    ast_node_t *vla_size_expr; // For VLAs
-    
-    // Function information
-    ast_node_t **param_symbols;
-    int param_count;
-    int is_function_defined;
-    int is_variadic;
-    
-    // Struct/Union/Enum information
-    struct symbol **members;     // For struct/union members
-    int member_count;
-    size_t total_size;          // Total size of struct/union
-    size_t max_alignment;       // Maximum alignment of members
-    
-    // Enum information
-    int enum_value;             // For enum constants
-    
-    // Label information
-    char *label_name;           // For goto labels
-    int label_defined;
-    
-    // Hash table bucket chaining
-    struct symbol *next;
+	char *name;
+	char *llvm_name;
+	symbol_type_t sym_type;
+	type_info_t type_info;
+
+	// Scope and storage information
+	int scope_level;
+	int is_global;
+	int is_parameter;
+	int is_static;
+	int is_extern;
+
+	// Size and offset information
+	size_t size;      // Size in bytes
+	size_t alignment; // Alignment requirement
+	size_t offset;    // Offset in struct/union or stack frame
+
+	// Array information
+	int is_array;
+	int array_len;
+	int array_dimensions;
+	size_t *array_sizes; // Size of each dimension
+	int is_vla;
+	ast_node_t *vla_size_expr; // For VLAs
+
+	// Function information
+	ast_node_t **param_symbols;
+	int param_count;
+	int is_function_defined;
+	int is_variadic;
+
+	// Struct/Union/Enum information
+	struct symbol **members; // For struct/union members
+	int member_count;
+	size_t total_size;    // Total size of struct/union
+	size_t max_alignment; // Maximum alignment of members
+
+	// Enum information
+	int enum_value; // For enum constants
+
+	// Label information
+	char *label_name; // For goto labels
+	int label_defined;
+
+	// Hash table bucket chaining
+	struct symbol *next;
 } symbol_t;
 
 // Scope management
 typedef struct scope {
-    symbol_t **buckets;
-    size_t bucket_count; // normally SCOPE_BUCKETS
-    size_t symbol_count;
-    int level;
-    struct scope *parent;
+	symbol_t **buckets;
+	size_t bucket_count; // normally SCOPE_BUCKETS
+	size_t symbol_count;
+	int level;
+	struct scope *parent;
 } scope_t;
 
 // Symbol table context
 typedef struct symbol_table {
-    scope_t *current_scope;
-    scope_t *global_scope;
-    int scope_counter;
-    int temp_counter;
-    char *current_function;
+	scope_t *current_scope;
+	scope_t *global_scope;
+	int scope_counter;
+	int temp_counter;
+	char *current_function;
 } symbol_table_t;
 
 // Main symbol table functions
