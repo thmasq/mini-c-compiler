@@ -1,4 +1,4 @@
-name: Pages build and deployment
+name: pages build and deployment
 
 on:
   push:
@@ -34,8 +34,18 @@ jobs:
         with:
           path: docs
 
-  deploy:
+  report-build-status:
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarize build
+        run: |
+          echo "✅ MkDocs build finalizado e artifact enviado." >> $GITHUB_STEP_SUMMARY
+          echo "Branch: ${GITHUB_REF_NAME}" >> $GITHUB_STEP_SUMMARY
+          echo "Commit: ${GITHUB_SHA}" >> $GITHUB_STEP_SUMMARY
+
+  deploy:
+    needs: [build, report-build-status]
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -44,3 +54,4 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
