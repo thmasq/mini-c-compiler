@@ -284,6 +284,7 @@ function_definition
     : declaration_specifiers declarator declaration_list compound_statement {
         type_info_t func_type = make_complete_type($1, $2);
         $$ = create_function(string_duplicate($2.name), func_type, NULL, 0, $4);
+        free($2.name);
         cleanup_type_info(&$1);
         // func_type is now owned by the function node
     }
@@ -298,6 +299,7 @@ function_definition
         }
 
         $$ = create_function(string_duplicate($2.name), func_type, params, param_count, $3);
+        free($2.name);
         cleanup_type_info(&$1);
         // func_type is now owned by the function node
     }
@@ -491,6 +493,7 @@ struct_declarator
     : declarator {
         $$ = create_member_info(string_duplicate($1.name),
                                create_type_info(string_duplicate("int"), $1.pointer_level, $1.is_array, $1.array_size), 0);
+        free($1.name);
     }
     | COLON constant_expression {
         $$ = create_member_info(string_duplicate(""),
@@ -503,6 +506,7 @@ struct_declarator
                                create_type_info(string_duplicate("int"), $1.pointer_level, $1.is_array, $1.array_size),
                                $3->data.number.value);
         $$->bit_field_expr = $3;
+        free($1.name);
     }
     ;
 
@@ -695,6 +699,7 @@ parameter_declaration
     : declaration_specifiers declarator {
         type_info_t param_type = make_complete_type($1, $2);
         $$ = create_parameter(param_type, string_duplicate($2.name));
+        free($2.name);
         cleanup_type_info(&$1);
     }
     | declaration_specifiers abstract_declarator {
@@ -1214,6 +1219,7 @@ declaration
                                    $2.initializers[0]);
             
             // Clean up
+            free($2.declarators[0].name);
             free($2.declarators);
             free($2.initializers);
             cleanup_type_info(&$1);
@@ -1226,6 +1232,7 @@ declaration
                 decls[i] = create_declaration(complete_type,
                                              string_duplicate($2.declarators[i].name),
                                              $2.initializers[i]);
+                free($2.declarators[i].name);
             }
             
             // Create a compound statement to hold all declarations
