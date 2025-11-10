@@ -24,7 +24,7 @@
 #define BOOL_ALIGN 1
 
 // Utility function for string duplication
-static char *string_duplicate(const char *str) {
+static inline char *string_duplicate(const char *str) {
     if (!str) return NULL;
     size_t len = strlen(str) + 1;
     char *copy = malloc(len);
@@ -57,9 +57,42 @@ type_info_t deep_copy_type_info(const type_info_t *src) {
     return result;
 }
 
+size_t symbol_table_hash(const char *src)
+{
+    // Algorithm: djb2a hash function
+    size_t hash = 5381; // Magic constant: fewer collisions and better avalanche effect, apparently
+    char c;
+    while ((c = *src++))
+        hash = ((hash << 5) + hash) ^ c; // hash * 33 ^ c
+    return hash;
+}
+
+/*
+    size_t symbol_table_nhash(const char *src, size_t len)
+    {
+        // Algorithm: djb2a hash function
+        size_t hash = 5381;
+        for (size_t i = 0; i < len; i++)
+            hash = ((hash << 5) + hash) ^ src[i]; // hash * 33 ^ src[i]
+        return hash;
+    }
+*/
+
 // Alignment calculation helper
-static size_t align_to(size_t size, size_t alignment) {
+static inline size_t align_to(size_t size, size_t alignment) {
     return (size + alignment - 1) & ~(alignment - 1);
+}
+
+static inline scope_t *allocate_scope(int level, scope_t *parent) {
+    scope_t *s = malloc(sizeof(scope_t));
+    if (!s) { fprintf(stderr, "Failed scope alloc\n"); exit(1); }
+    s->bucket_count = SCOPE_BUCKETS;
+    s->buckets = calloc(s->bucket_count, sizeof(symbol_t*));
+    if (!s->buckets) { fprintf(stderr, "Failed buckets alloc\n"); exit(1); }
+    s->symbol_count = 0;
+    s->level = level;
+    s->parent = parent;
+    return s;
 }
 
 // Create a new symbol table
@@ -71,8 +104,7 @@ symbol_table_t *create_symbol_table(void) {
     }
     
     // Create global scope
-    table->global_scope = malloc(sizeof(scope_t));
-    table->global_scope->symbols = NULL;
+    table->global_scope = allocate_scope(0, NULL);
     table->global_scope->level = 0;
     table->global_scope->parent = NULL;
     
@@ -106,14 +138,30 @@ void free_symbol(symbol_t *sym) {
     free(sym);
 }
 
-// Clean up symbols in a scope
-static void free_scope_symbols(symbol_t *symbols) {
-    symbol_t *sym = symbols;
-    while (sym) {
-        symbol_t *next = sym->next;
-        free_symbol(sym);
-        sym = next;
+/*
+    // Clean up symbols in a scope
+    static inline void free_scope_symbols(symbol_t *symbols) {
+        symbol_t *sym = symbols;
+        while (sym) {
+            symbol_t *next = sym->next;
+            free_symbol(sym);
+            sym = next;
+        }
     }
+*/
+
+static inline void free_scope(scope_t *scope) {
+    if (!scope) return;
+    for (size_t i = 0; i < scope->bucket_count; i++) {
+        symbol_t *sym = scope->buckets[i];
+        while (sym) {
+            symbol_t *next = sym->next;
+            free_symbol(sym);
+            sym = next;
+        }
+    }
+    free(scope->buckets);
+    free(scope);
 }
 
 // Destroy symbol table and free all memory
@@ -126,8 +174,7 @@ void destroy_symbol_table(symbol_table_t *table) {
     }
     
     // Clean up global scope
-    free_scope_symbols(table->global_scope->symbols);
-    free(table->global_scope);
+    free_scope(table->global_scope);
     
     free(table->current_function);
     free(table);
@@ -135,10 +182,7 @@ void destroy_symbol_table(symbol_table_t *table) {
 
 // Enter a new scope
 void enter_scope(symbol_table_t *table) {
-    scope_t *new_scope = malloc(sizeof(scope_t));
-    new_scope->symbols = NULL;
-    new_scope->level = ++table->scope_counter;
-    new_scope->parent = table->current_scope;
+    scope_t *new_scope = allocate_scope(++table->scope_counter, table->current_scope);
     table->current_scope = new_scope;
 }
 
@@ -153,12 +197,11 @@ void exit_scope(symbol_table_t *table) {
     table->scope_counter--;
     
     // Free all symbols in the exiting scope
-    free_scope_symbols(old_scope->symbols);
-    free(old_scope);
+    free_scope(old_scope);
 }
 
 // Calculate size of a basic type
-static size_t get_basic_type_size(const char *type_name) {
+static inline size_t get_basic_type_size(const char *type_name) {
     if (strcmp(type_name, "char") == 0) return CHAR_SIZE;
     if (strcmp(type_name, "short") == 0) return SHORT_SIZE;
     if (strcmp(type_name, "int") == 0) return INT_SIZE;
@@ -178,7 +221,7 @@ static size_t get_basic_type_size(const char *type_name) {
 }
 
 // Calculate alignment of a basic type
-static size_t get_basic_type_alignment(const char *type_name) {
+static inline size_t get_basic_type_alignment(const char *type_name) {
     if (strcmp(type_name, "char") == 0) return CHAR_ALIGN;
     if (strcmp(type_name, "short") == 0) return SHORT_ALIGN;
     if (strcmp(type_name, "int") == 0) return INT_ALIGN;
@@ -428,11 +471,17 @@ char *generate_unique_name(symbol_table_t *table, const char *base_name) {
 
 // Add symbol to current scope
 symbol_t *add_symbol(symbol_table_t *table, const char *name, symbol_type_t sym_type, type_info_t type_info) {
+    size_t h = symbol_table_hash(name);
+    size_t idx = h % table->current_scope->bucket_count;
+    
     // Check if symbol already exists in current scope
-    symbol_t *existing = find_symbol_in_scope(table->current_scope, name);
-    if (existing) {
-        fprintf(stderr, "Symbol '%s' already defined in current scope\n", name);
-        return NULL;
+    symbol_t *cur = table->current_scope->buckets[idx];
+    while (cur) {
+        if (strcmp(cur->name, name) == 0) {
+            fprintf(stderr, "Symbol '%s' already defined in scope %d\n", name, table->current_scope->level);
+            return NULL;
+        }
+        cur = cur->next;
     }
     
     symbol_t *sym = create_symbol(name, sym_type, type_info);
@@ -452,9 +501,10 @@ symbol_t *add_symbol(symbol_table_t *table, const char *name, symbol_type_t sym_
         sym->alignment = calculate_type_alignment(&sym->type_info, table);
     }
     
-    // Add to current scope
-    sym->next = table->current_scope->symbols;
-    table->current_scope->symbols = sym;
+    // Push forward into the bucket list
+    sym->next = table->current_scope->buckets[idx];
+    table->current_scope->buckets[idx] = sym;
+    table->current_scope->symbol_count++;
     
     return sym;
 }
@@ -476,7 +526,9 @@ symbol_t *find_symbol(symbol_table_t *table, const char *name) {
 
 // Find symbol in specific scope
 symbol_t *find_symbol_in_scope(scope_t *scope, const char *name) {
-    symbol_t *sym = scope->symbols;
+    size_t h = symbol_table_hash(name);
+    size_t idx = h % scope->bucket_count;
+    symbol_t *sym = scope->buckets[idx];
     
     while (sym) {
         if (strcmp(sym->name, name) == 0) {
@@ -578,12 +630,14 @@ symbol_t *find_label(symbol_table_t *table, const char *label_name) {
     scope_t *scope = table->current_scope;
     
     while (scope) {
-        symbol_t *sym = scope->symbols;
-        while (sym) {
-            if (sym->sym_type == SYM_LABEL && strcmp(sym->name, label_name) == 0) {
-                return sym;
+        for (size_t i = 0; i < scope->bucket_count; i++) {
+            symbol_t *sym = scope->buckets[i];
+            while (sym) {
+                if (sym->sym_type == SYM_LABEL && strcmp(sym->name, label_name) == 0) {
+                    return sym;
+                }
+                sym = sym->next;
             }
-            sym = sym->next;
         }
         scope = scope->parent;
     }
@@ -620,15 +674,15 @@ type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table) {
     if (!expr) return default_type;
     
     switch (expr->type) {
-        case AST_NUMBER:
+        case AST_NUMBER: // integer literals decay to int
             free_type_info(&default_type);
             return create_type_info(string_duplicate("int"), 0, 0, NULL);
             
-        case AST_CHARACTER:
+        case AST_CHARACTER: // character literals decay to char
             free_type_info(&default_type);
             return create_type_info(string_duplicate("char"), 0, 0, NULL);
             
-        case AST_STRING_LITERAL:
+        case AST_STRING_LITERAL: // string literals decay to char*
             free_type_info(&default_type);
             return create_type_info(string_duplicate("char"), 1, 0, NULL); // char*
             
@@ -641,7 +695,7 @@ type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table) {
             break;
         }
         
-        case AST_BINARY_OP:
+        case AST_BINARY_OP: // operators +, -, *, /, %, ==, !=, <, >, <=, >=, &&, ||
             // Most binary ops return int, comparisons return bool
             if (expr->data.binary_op.op >= OP_EQ && expr->data.binary_op.op <= OP_GE) {
                 free_type_info(&default_type);
@@ -649,7 +703,7 @@ type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table) {
             }
             return default_type;
             
-        case AST_UNARY_OP:
+        case AST_UNARY_OP: // operators +, -, !, ~
             if (expr->data.unary_op.op == OP_NOT) {
                 free_type_info(&default_type);
                 return create_type_info(string_duplicate("_Bool"), 0, 0, NULL);
@@ -659,14 +713,14 @@ type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table) {
                 return operand_type;
             }
             
-        case AST_ADDRESS_OF: {
+        case AST_ADDRESS_OF: { // (prefixed) operator &
             type_info_t operand_type = get_expression_type(expr->data.address_of.operand, table);
             operand_type.pointer_level++;
             free_type_info(&default_type);
             return operand_type;
         }
         
-        case AST_DEREFERENCE: {
+        case AST_DEREFERENCE: { // operator *
             type_info_t operand_type = get_expression_type(expr->data.dereference.operand, table);
             if (operand_type.pointer_level > 0) {
                 operand_type.pointer_level--;
@@ -674,12 +728,125 @@ type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table) {
             free_type_info(&default_type);
             return operand_type;
         }
+
+        case AST_CALL: {
+            // Function calls return the function's return type
+            symbol_t *func_sym = find_symbol(table, expr->data.call.name);
+            if (func_sym) {
+                free_type_info(&default_type);
+                return deep_copy_type_info(&func_sym->type_info);
+            }
+            break;
+        }
+
+        case AST_ARRAY_ACCESS: { // operator []
+            type_info_t array_type = get_expression_type(expr->data.array_access.array, table);
+            if (array_type.pointer_level > 0) {
+                array_type.pointer_level--;
+            }
+            free_type_info(&default_type);
+            return array_type;
+        }
+
+        case AST_MEMBER_ACCESS: { // operator .
+            type_info_t struct_type = get_expression_type(expr->data.member_access.object, table);
+
+            // Type Validation: cannot be pointer (use -> for this)
+            if (struct_type.pointer_level > 0) {
+                fprintf(stderr, "Error: Use '->' for pointer member access, not '.'\n"); // Debug message
+                free_type_info(&struct_type);
+                break;
+            }
+            
+            symbol_t *struct_sym = find_symbol(table, struct_type.base_type);
+            if (struct_sym) {
+                symbol_t *member_sym = find_struct_member(struct_sym, expr->data.member_access.member);
+                if (member_sym) {
+                    free_type_info(&default_type);
+                    return deep_copy_type_info(&member_sym->type_info);
+                }
+            }
+            break;
+        }
+
+        case AST_CAST: { // (type) expression
+            free_type_info(&default_type);
+            return deep_copy_type_info(&expr->data.cast.target_type);
+        }
+
+        case AST_CONDITIONAL: {
+            type_info_t then_type = get_expression_type(expr->data.conditional.true_expr, table);
+            type_info_t else_type = get_expression_type(expr->data.conditional.false_expr, table);
+            
+            // C arithmetic promotion rule: int + double → double
+            if (is_floating_type(&then_type) || is_floating_type(&else_type)) {
+                // Promote to float/double
+                type_info_t promoted = create_type_info(string_duplicate("double"), 0, 0, NULL);
+                free_type_info(&then_type);
+                free_type_info(&else_type);
+                free_type_info(&default_type);
+                return promoted;
+            }
+            
+            if (is_compatible_type(&then_type, &else_type)) {
+                free_type_info(&default_type);
+                free_type_info(&else_type);
+                return then_type;
+            }
+            
+            free_type_info(&then_type);
+            free_type_info(&else_type);
+            break;
+        }
+
+        case AST_SIZEOF: { // sizeof operator
+            // sizeof always returns size_t
+            type_info_t size_type = create_type_info(string_duplicate("size_t"), 0, 0, NULL);
+            free_type_info(&default_type);
+            return size_type;
+        }
+
+        case AST_PTR_MEMBER_ACCESS: { // operator ->
+            // Similar to AST_MEMBER_ACCESS but with pointer(s)
+            type_info_t ptr_type = get_expression_type(expr->data.ptr_member_access.object, table);
+            
+            // Implicit dereference: pointer -> struct
+            if (ptr_type.pointer_level > 0) {
+                ptr_type.pointer_level--;
+            }
+            
+            symbol_t *struct_sym = find_symbol(table, ptr_type.base_type);
+            if (struct_sym) {
+                symbol_t *member_sym = find_struct_member(struct_sym, expr->data.ptr_member_access.member);
+                if (member_sym) {
+                    free_type_info(&default_type);
+                    return deep_copy_type_info(&member_sym->type_info);
+                }
+            }
+            break;
+        }
+
+        // TODO: Implement the AST_COMPOUND_ASSIGNMENT enum (case) in ast_node_t
+        /*
+            case AST_COMPOUND_ASSIGNMENT: {
+                // Returns the lvalue type
+                return get_expression_type(expr->data.compound_assignment.lvalue, table);
+            }
+        */
+
+        case AST_INITIALIZER_LIST: {
+            // Returns the type of the first element (or array)
+            if (expr->data.initializer_list.count > 0) {
+                return get_expression_type(expr->data.initializer_list.values[0], table);
+            }
+            break;
+        }
         
-        default:
+        default: // Unhandled cases
             break;
     }
     
-    return default_type;
+    return default_type; // Fallback to int
 }
 
 // Clean up type_info in a symbol
@@ -695,11 +862,15 @@ void print_symbol_table(symbol_table_t *table) {
     scope_t *scope = table->current_scope;
     
     while (scope) {
-        printf("Scope level %d:\n", scope->level);
-        symbol_t *sym = scope->symbols;
-        while (sym) {
-            print_symbol(sym, 2);
-            sym = sym->next;
+        printf("Scope %d (symbols=%zu):\n", scope->level, scope->symbol_count);
+        for (size_t i = 0; i < scope->bucket_count; i++) {
+            symbol_t *sym = scope->buckets[i];
+            if (!sym) continue;
+            printf("  [bucket %zu]\n", i);
+            while (sym) {
+                print_symbol(sym, 4);
+                sym = sym->next;
+            }
         }
         scope = scope->parent;
     }
