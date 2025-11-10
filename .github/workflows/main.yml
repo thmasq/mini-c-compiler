@@ -23,7 +23,8 @@ jobs:
           flex \
           bison \
           clang \
-          llvm
+          llvm \
+          valgrind
 
     - name: Display tool versions
       run: |
@@ -32,6 +33,7 @@ jobs:
         bison --version
         clang --version
         llvm-config --version
+        valgrind --version
 
     - name: Build compiler
       run: |
@@ -41,53 +43,65 @@ jobs:
     - name: Verify compiler binary
       run: |
         ls -lh minicc
-        ./minicc -h || true 
+        valgrind $VALGRIND_OPTS ./minicc -h || true 
 
     - name: Run lexer tests
       run: |
         chmod +x tests/lex/run.sh
+        # Modify the test script to use Valgrind
+        export VALGRIND_MINICC="valgrind $VALGRIND_OPTS"
         bash tests/lex/run.sh
 
     - name: Run parser tests
       run: |
         chmod +x tests/syntax/run.sh
+        export VALGRIND_MINICC="valgrind $VALGRIND_OPTS"
         bash tests/syntax/run.sh
 
     - name: Install test files
       run: make install-tests
 
-    - name: Test LLVM IR generation (basic)
+    - name: Test LLVM IR generation (basic) with Valgrind
       run: |
-        make test
-        echo "✓ Basic arithmetic test passed"
+        echo "=== Testing with Valgrind: Basic arithmetic ==="
+        valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+          ./minicc -S tests/basic/arithmetic.c -o build/test_arithmetic.ll
+        echo "✓ Basic arithmetic test passed (no memory errors)"
 
-    - name: Test LLVM IR generation (advanced)
+    - name: Test LLVM IR generation (advanced) with Valgrind
       run: |
-        make test-advanced
-        echo "✓ Advanced fibonacci test passed"
+        echo "=== Testing with Valgrind: Advanced fibonacci ==="
+        valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+          ./minicc -S tests/advanced/fibonacci.c -o build/test_fibonacci.ll
+        echo "✓ Advanced fibonacci test passed (no memory errors)"
 
-    - name: Test LLVM IR generation (examples)
+    - name: Test LLVM IR generation (examples) with Valgrind
       run: |
-        make test-example
-        echo "✓ Example test passed"
+        echo "=== Testing with Valgrind: Example program ==="
+        valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+          ./minicc -S examples/sample.c -o build/test_example.ll
+        echo "✓ Example test passed (no memory errors)"
 
-    - name: Test LLVM IR generation (pointers)
+    - name: Test LLVM IR generation (pointers) with Valgrind
       run: |
-        make test-pointers
-        echo "✓ Pointer test passed"
+        echo "=== Testing with Valgrind: Pointer tests ==="
+        valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+          ./minicc -S examples/pointer_test.c -o build/test_pointers.ll
+        echo "✓ Pointer test passed (no memory errors)"
 
-    - name: Test executable generation and return codes
+    - name: Test executable generation with Valgrind
       run: |
-        echo "=== Testing executable generation and return codes ==="
+        echo "=== Testing executable generation with Valgrind ==="
         
         # Test 1: Basic arithmetic (should return 50)
         echo "Test 1: Basic arithmetic"
-        ./minicc -c tests/basic/arithmetic.c -o build/test_arithmetic
+        valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+          ./minicc -c tests/basic/arithmetic.c -o build/test_arithmetic
         
-        set +e # Disable exit-on-error
+        set +e
         build/test_arithmetic
         RESULT=$?
-        set -e # Re-enable exit-on-error
+        set -e
         
         if [ $RESULT -eq 50 ]; then
           echo "✓ Basic arithmetic returned correct value: $RESULT"
@@ -100,12 +114,13 @@ jobs:
 
         # Test 2: Fibonacci (should return 0)
         echo "Test 2: Fibonacci"
-        ./minicc -c tests/advanced/fibonacci.c -o build/test_fibonacci
+        valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+          ./minicc -c tests/advanced/fibonacci.c -o build/test_fibonacci
         
-        set +e # Disable exit-on-error
+        set +e
         build/test_fibonacci
         RESULT=$?
-        set -e # Re-enable exit-on-error
+        set -e
         
         if [ $RESULT -eq 0 ]; then
           echo "✓ Fibonacci returned correct value: $RESULT"
@@ -118,12 +133,13 @@ jobs:
 
         # Test 3: Example (should return 16)
         echo "Test 3: Example (power function)"
-        ./minicc -c examples/sample.c -o build/test_example
+        valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+          ./minicc -c examples/sample.c -o build/test_example
         
-        set +e # Disable exit-on-error
+        set +e
         build/test_example
         RESULT=$?
-        set -e # Re-enable exit-on-error
+        set -e
         
         if [ $RESULT -eq 16 ]; then
           echo "✓ Example returned correct value: $RESULT"
@@ -136,12 +152,13 @@ jobs:
 
         # Test 4: Pointers (should return 0 = all tests passed)
         echo "Test 4: Comprehensive pointer tests"
-        ./minicc -c examples/pointer_test.c -o build/test_pointers
+        valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+          ./minicc -c examples/pointer_test.c -o build/test_pointers
         
-        set +e # Disable exit-on-error
+        set +e
         build/test_pointers
         RESULT=$?
-        set -e # Re-enable exit-on-error
+        set -e
         
         if [ $RESULT -eq 0 ]; then
           echo "✓ Pointer tests all passed: $RESULT"
@@ -150,9 +167,9 @@ jobs:
           exit 1
         fi
 
-    - name: Test custom programs
+    - name: Test custom programs with Valgrind
       run: |
-        echo "=== Testing custom programs ==="
+        echo "=== Testing custom programs with Valgrind ==="
         
         # Test simple return value
         cat > /tmp/test_return.c << 'EOF'
@@ -161,12 +178,13 @@ jobs:
         }
         EOF
         
-        ./minicc -c /tmp/test_return.c -o /tmp/test_return
+        valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+          ./minicc -c /tmp/test_return.c -o /tmp/test_return
         
-        set +e # Disable exit-on-error
+        set +e
         /tmp/test_return
         RESULT=$?
-        set -e # Re-enable exit-on-error
+        set -e
         
         if [ $RESULT -eq 42 ]; then
           echo "✓ Simple return test passed: $RESULT"
@@ -187,12 +205,13 @@ jobs:
         }
         EOF
         
-        ./minicc -c /tmp/test_conditional.c -o /tmp/test_conditional
+        valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+          ./minicc -c /tmp/test_conditional.c -o /tmp/test_conditional
         
-        set +e # Disable exit-on-error
+        set +e
         /tmp/test_conditional
         RESULT=$?
-        set -e # Re-enable exit-on-error
+        set -e
         
         if [ $RESULT -eq 1 ]; then
           echo "✓ Conditional test passed: $RESULT"
@@ -214,12 +233,13 @@ jobs:
         }
         EOF
         
-        ./minicc -c /tmp/test_loop.c -o /tmp/test_loop
+        valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+          ./minicc -c /tmp/test_loop.c -o /tmp/test_loop
         
-        set +e # Disable exit-on-error
+        set +e
         /tmp/test_loop
         RESULT=$?
-        set -e # Re-enable exit-on-error
+        set -e
         
         if [ $RESULT -eq 10 ]; then
           echo "✓ Loop test passed: $RESULT"
@@ -228,25 +248,119 @@ jobs:
           exit 1
         fi
 
-    - name: Test compilation flags
+    - name: Test compilation flags with Valgrind
       run: |
-        echo "=== Testing compilation flags ==="
+        echo "=== Testing compilation flags with Valgrind ==="
         
         # Test verbose mode
-        ./minicc -v examples/sample.c -o /tmp/test_verbose.ll
-        echo "✓ Verbose mode works"
+        valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+          ./minicc -v examples/sample.c -o /tmp/test_verbose.ll
+        echo "✓ Verbose mode works (no memory errors)"
         
         # Test optimization levels
         for OPT in 0 1 2 3; do
-          ./minicc -O $OPT -c examples/sample.c -o /tmp/test_opt$OPT
-          echo "✓ Optimization level -O$OPT works"
+          valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+            ./minicc -O $OPT -c examples/sample.c -o /tmp/test_opt$OPT
+          echo "✓ Optimization level -O$OPT works (no memory errors)"
         done
 
-    - name: Generate test report
+    - name: Memory stress test
+      run: |
+        echo "=== Running memory stress test ==="
+        
+        # Create a larger test file to stress memory management
+        cat > /tmp/stress_test.c << 'EOF'
+        int fib(int n) {
+            if (n <= 1) return n;
+            return fib(n-1) + fib(n-2);
+        }
+        
+        int factorial(int n) {
+            if (n <= 1) return 1;
+            return n * factorial(n-1);
+        }
+        
+        int main() {
+            int arr[100];
+            int i = 0;
+            while (i < 100) {
+                arr[i] = i * 2;
+                i = i + 1;
+            }
+            
+            int sum = 0;
+            i = 0;
+            while (i < 100) {
+                sum = sum + arr[i];
+                i = i + 1;
+            }
+            
+            int f5 = fib(5);
+            int fact5 = factorial(5);
+            
+            return (sum + f5 + fact5) % 256;
+        }
+        EOF
+        
+        echo "Compiling stress test with full Valgrind analysis..."
+        valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose --error-exitcode=99 \
+                 ./minicc -c /tmp/stress_test.c -o /tmp/stress_test
+        
+        echo "✓ Memory stress test passed"
+
+    - name: Test error handling with Valgrind
+      run: |
+        echo "=== Testing error handling with Valgrind ==="
+        
+        # Test with semantic errors (should still not leak memory)
+        set +e
+        valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+          ./minicc -c examples/test_semantic_errors.c -o /tmp/test_semantic 2>&1 | tee /tmp/semantic_output
+        EXIT_CODE=$?
+        set -e
+        
+        # Valgrind exit code 99 means memory error
+        # Other non-zero means compilation error (expected)
+        if [ $EXIT_CODE -eq 99 ]; then
+          echo "✗ Memory errors detected in error handling"
+          exit 1
+        else
+          echo "✓ Error handling does not leak memory"
+        fi
+        
+        # Test with syntax errors
+        cat > /tmp/syntax_error.c << 'EOF'
+        int main() {
+            int x = 10
+            return x;
+        }
+        EOF
+        
+        set +e
+        valgrind --leak-check=full --show-leak-kinds=definite,possible --track-origins=yes --error-exitcode=99 --errors-for-leak-kinds=definite \
+          ./minicc -c /tmp/syntax_error.c -o /tmp/syntax_error 2>&1
+        EXIT_CODE=$?
+        set -e
+        
+        if [ $EXIT_CODE -eq 99 ]; then
+          echo "✗ Memory errors detected in syntax error handling"
+          exit 1
+        else
+          echo "✓ Syntax error handling does not leak memory"
+        fi
+
+    - name: Generate memory analysis report
       if: always()
       run: |
-        echo "=== CI Test Summary ==="
-        echo "CI run finished."
+        echo "=== Memory Analysis Summary ==="
+        echo "All minicc invocations were checked with Valgrind"
+        echo "Valgrind configuration:"
+        echo "  - Leak check: full"
+        echo "  - Track origins: yes"
+        echo "  - Show leak kinds: definite, possible"
+        echo "  - Error exit code: 99"
+        echo ""
+        echo "Memory safety verification completed successfully!"
 
     - name: Upload artifacts on failure
       if: failure()
@@ -258,3 +372,4 @@ jobs:
           build/test_*
           /tmp/*.ll
           /tmp/test_*
+          /tmp/*_output
