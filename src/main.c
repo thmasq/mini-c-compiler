@@ -522,6 +522,7 @@ int main(int argc, char *argv[])
 			}
 			free_ast(ast_root);
 			destroy_symbol_table(global_symbol_table);
+			yylex_destroy();
 			return 1;
 		}
 	}
