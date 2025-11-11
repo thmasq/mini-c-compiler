@@ -7,16 +7,13 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-extern FILE *yyin;
-extern int yyparse();
-extern ast_node_t *ast_root;
-extern int error_count;
 extern symbol_table_t *global_symbol_table;
 extern int yylex(void);
 extern int lex_error_count;
 extern char *yytext;
 extern int get_line_number(void);
 extern int get_column(void);
+extern void yylex_destroy(void);
 
 // Program version and info
 #define VERSION "2.0.0"
@@ -559,6 +556,7 @@ int main(int argc, char *argv[])
 	// Cleanup parsing resources
 	free_ast(ast_root);
 	fclose(yyin);
+	yylex_destroy();
 	destroy_symbol_table(global_symbol_table);
 
 	// If compiling to executable and no critical errors, use clang

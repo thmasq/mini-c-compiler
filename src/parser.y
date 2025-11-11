@@ -907,14 +907,18 @@ postfix_expression
     }
     | postfix_expression LPAREN RPAREN {
         if ($1->type == AST_IDENTIFIER) {
-            $$ = create_call($1->data.identifier.name, NULL, 0);
+            char *func_name = string_duplicate($1->data.identifier.name);
+            $$ = create_call(func_name, NULL, 0);
+            free_ast($1);
         } else {
             $$ = create_error_expression();
         }
     }
     | postfix_expression LPAREN argument_expression_list RPAREN {
         if ($1->type == AST_IDENTIFIER) {
-            $$ = create_call($1->data.identifier.name, $3.nodes, $3.count);
+            char *func_name = string_duplicate($1->data.identifier.name);
+            $$ = create_call(func_name, $3.nodes, $3.count);
+            free_ast($1);
         } else {
             $$ = create_error_expression();
         }
@@ -1108,7 +1112,9 @@ assignment_expression
     | unary_expression assignment_operator assignment_expression {
         if ($2 == OP_ASSIGN) {
             if ($1->type == AST_IDENTIFIER) {
-                $$ = create_assignment($1->data.identifier.name, $3);
+                char *var_name = string_duplicate($1->data.identifier.name);
+                $$ = create_assignment(var_name, $3);
+                free_ast($1);
             } else {
                 $$ = create_assignment_to_lvalue($1, $3);
             }
