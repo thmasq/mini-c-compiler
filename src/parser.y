@@ -116,6 +116,47 @@ static void cleanup_type_info(type_info_t *type_info) {
     } declarator_list;
 }
 
+%destructor { 
+    if ($$) free($$); 
+} <string>
+
+%destructor { 
+    cleanup_type_info(&$$); 
+} <type_info>
+
+%destructor {
+    if ($$.name) free($$.name);
+    free_ast($$.array_size);
+    if ($$.params) {
+        for (int i = 0; i < $$.param_count; i++) {
+            free_ast($$.params[i]); // free children
+        }
+        free($$.params);
+    }
+} <declarator>
+
+%destructor {
+    if ($$.declarators) {
+        for (int i = 0; i < $$.count; i++) {
+            if ($$.declarators[i].name) free($$.declarators[i].name);
+            free_ast($$.declarators[i].array_size); // free child
+            if ($$.declarators[i].params) {
+               for (int j = 0; j < $$.declarators[i].param_count; j++) {
+                   free_ast($$.declarators[i].params[j]); // free children
+               }
+               free($$.declarators[i].params);
+            }
+        }
+        free($$.declarators);
+    }
+    if ($$.initializers) {
+        for (int i = 0; i < $$.count; i++) {
+            free_ast($$.initializers[i]); 
+        }
+        free($$.initializers);
+    }
+} <declarator_list>
+
 /* Tokens */
 %token <string> IDENTIFIER TYPE_NAME STRING_LITERAL
 %token <number> CONSTANT
@@ -150,7 +191,8 @@ static void cleanup_type_info(type_info_t *type_info) {
 %type <node> exclusive_or_expression inclusive_or_expression logical_and_expression
 %type <node> logical_or_expression conditional_expression assignment_expression
 %type <node> expression constant_expression
-%type <node> parameter_declaration abstract_declarator direct_abstract_declarator
+%type <node> parameter_declaration
+%type <declarator> abstract_declarator direct_abstract_declarator
 %type <node> initializer_list designation designator
 
 %type <type_info> declaration_specifiers type_specifier specifier_qualifier_list
@@ -690,8 +732,13 @@ parameter_declaration
         free($2.name);
         cleanup_type_info(&$1);
     }
-    | declaration_specifiers abstract_declarator {
-        type_info_t param_type = deep_copy_type_info(&$1);
+| declaration_specifiers abstract_declarator {
+        type_info_t param_type = make_complete_type($1, $2);
+        
+        if ($2.is_function) {
+            param_type.param_types = $2.params;
+        }
+
         $$ = create_parameter(param_type, string_duplicate(""));
         cleanup_type_info(&$1);
     }
@@ -705,29 +752,78 @@ parameter_declaration
 type_name
     : specifier_qualifier_list { $$ = $1; }
     | specifier_qualifier_list abstract_declarator { 
-        $$ = $1; 
-        // Apply abstract declarator modifications here if needed
+        $$ = make_complete_type($1, $2);
+        cleanup_type_info(&$1);
     }
     ;
 
 abstract_declarator
-    : pointer { $$ = NULL; }
+    : pointer {
+        $$ = $1;
+    }
     | direct_abstract_declarator { $$ = $1; }
-    | pointer direct_abstract_declarator { $$ = $2; }
+    | pointer direct_abstract_declarator {
+        $$ = $2;  /* $2 is the base abstract declarator */
+        $$.pointer_level += $1.pointer_level;
+    }
     ;
 
 direct_abstract_declarator
     : LPAREN abstract_declarator RPAREN { $$ = $2; }
-    | LBRACKET RBRACKET { $$ = NULL; }
-    | LBRACKET assignment_expression RBRACKET { $$ = NULL; }
-    | direct_abstract_declarator LBRACKET RBRACKET { $$ = $1; }
-    | direct_abstract_declarator LBRACKET assignment_expression RBRACKET { $$ = $1; }
-    | LBRACKET ASTERISK RBRACKET { $$ = NULL; }
-    | direct_abstract_declarator LBRACKET ASTERISK RBRACKET { $$ = $1; }
-    | LPAREN RPAREN { $$ = NULL; }
-    | LPAREN parameter_type_list RPAREN { $$ = NULL; }
-    | direct_abstract_declarator LPAREN RPAREN { $$ = $1; }
-    | direct_abstract_declarator LPAREN parameter_type_list RPAREN { $$ = $1; }
+    | LBRACKET RBRACKET {
+        $$ = make_declarator(NULL, 0, 1, NULL);
+        $$.is_array = 1;
+    }
+    | LBRACKET assignment_expression RBRACKET {
+        $$ = make_declarator(NULL, 0, 1, $2);
+        $$.is_array = 1;
+    }
+    | direct_abstract_declarator LBRACKET RBRACKET {
+        $$ = $1;
+        $$.is_array = 1;
+        free_ast($1.array_size);
+        $$.array_size = NULL;
+    }
+    | direct_abstract_declarator LBRACKET assignment_expression RBRACKET {
+        $$ = $1;
+        $$.is_array = 1;
+        free_ast($1.array_size);
+        $$.array_size = $3;
+    }
+    | LBRACKET ASTERISK RBRACKET {
+        $$ = make_declarator(NULL, 0, 1, NULL);
+        $$.is_array = 1;
+    }
+    | direct_abstract_declarator LBRACKET ASTERISK RBRACKET {
+        $$ = $1;
+        $$.is_array = 1;
+        free_ast($1.array_size);
+        $$.array_size = NULL;
+    }
+    | LPAREN RPAREN {
+        $$ = make_declarator(NULL, 0, 0, NULL);
+        $$.is_function = 1;
+        $$.params = NULL;
+        $$.param_count = 0;
+    }
+    | LPAREN parameter_type_list RPAREN {
+        $$ = make_declarator(NULL, 0, 0, NULL);
+        $$.is_function = 1;
+        $$.params = $2.nodes;
+        $$.param_count = $2.count;
+    }
+    | direct_abstract_declarator LPAREN RPAREN {
+        $$ = $1;
+        $$.is_function = 1;
+        $$.params = NULL;
+        $$.param_count = 0;
+    }
+    | direct_abstract_declarator LPAREN parameter_type_list RPAREN {
+        $$ = $1;
+        $$.is_function = 1;
+        $$.params = $3.nodes;
+        $$.param_count = $3.count;
+    }
     ;
 
 /* Statements */
