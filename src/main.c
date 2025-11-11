@@ -475,6 +475,8 @@ int main(int argc, char *argv[])
 				unlink(ir_file);
 				free(ir_file);
 			}
+			free_ast(ast_root);
+			yylex_destroy();
 			destroy_symbol_table(global_symbol_table);
 			return 1;
 		} else {
