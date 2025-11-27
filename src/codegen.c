@@ -2059,6 +2059,7 @@ static void generate_function(ast_node_t *node)
 }
 
 // Main code generation function
+// Main code generation function - REPLACE the existing generate_llvm_ir() in codegen.c
 void generate_llvm_ir(ast_node_t *ast, FILE *output)
 {
 	// Initialize context
@@ -2077,9 +2078,9 @@ void generate_llvm_ir(ast_node_t *ast, FILE *output)
 	ctx.string_literal_count = 0;
 
 	// Generate LLVM IR header
-	fprintf(output, "; MiniCC - Generated LLVM IR\n");
+	fprintf(output, "; MiniCC - Generated LLVM IR\n\n");
 
-	// First pass: collect all type definitions and global declarations
+	// First pass: collect all type definitions
 	for (int i = 0; i < ast->data.program.decl_count; i++) {
 		ast_node_t *decl = ast->data.program.declarations[i];
 
@@ -2094,14 +2095,60 @@ void generate_llvm_ir(ast_node_t *ast, FILE *output)
 		}
 	}
 
-	// Second pass: generate functions and other declarations
+	// Second pass: generate function declarations (prototypes/extern)
 	for (int i = 0; i < ast->data.program.decl_count; i++) {
 		ast_node_t *decl = ast->data.program.declarations[i];
 
-		if (decl->type == AST_FUNCTION) {
+		if (decl->type == AST_FUNCTION && !decl->data.function.is_defined) {
+			// This is a function declaration without body (prototype)
+			char *return_type_str = get_llvm_type_string(&decl->data.function.return_type);
+			fprintf(output, "declare %s @%s(", return_type_str, decl->data.function.name);
+
+			// Parameters
+			for (int j = 0; j < decl->data.function.param_count; j++) {
+				if (j > 0) {
+					fprintf(output, ", ");
+				}
+				ast_node_t *param = decl->data.function.params[j];
+				char *param_type_str = get_llvm_type_string(&param->data.parameter.type_info);
+				fprintf(output, "%s", param_type_str);
+				free(param_type_str);
+			}
+
+			if (decl->data.function.is_variadic) {
+				if (decl->data.function.param_count > 0) {
+					fprintf(output, ", ...");
+				} else {
+					fprintf(output, "...");
+				}
+			}
+
+			fprintf(output, ")\n");
+			free(return_type_str);
+
+			// Add to symbol table as extern function
+			symbol_t *func_sym = add_symbol(ctx.symbol_table, decl->data.function.name, SYM_FUNCTION,
+							decl->data.function.return_type);
+			if (func_sym) {
+				func_sym->is_extern = 1;
+				func_sym->is_function_defined = 0;
+				func_sym->param_count = decl->data.function.param_count;
+				func_sym->is_variadic = decl->data.function.is_variadic;
+			}
+		}
+	}
+
+	fprintf(output, "\n");
+
+	// Third pass: generate function definitions and other declarations
+	for (int i = 0; i < ast->data.program.decl_count; i++) {
+		ast_node_t *decl = ast->data.program.declarations[i];
+
+		if (decl->type == AST_FUNCTION && decl->data.function.is_defined) {
+			// Only generate definitions for functions with bodies
 			generate_function(decl);
-		} else if (decl->type != AST_STRUCT_DECL && decl->type != AST_UNION_DECL &&
-			   decl->type != AST_ENUM_DECL) {
+		} else if (decl->type != AST_FUNCTION && decl->type != AST_STRUCT_DECL &&
+			   decl->type != AST_UNION_DECL && decl->type != AST_ENUM_DECL) {
 			// Handle other global declarations
 			generate_statement(decl);
 		}

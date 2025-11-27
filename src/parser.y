@@ -314,6 +314,7 @@ function_definition
     : declaration_specifiers declarator declaration_list compound_statement {
         type_info_t func_type = make_complete_type($1, $2);
         $$ = create_function(string_duplicate($2.name), func_type, NULL, 0, $4);
+        $$->data.function.is_defined = 1;
         free($2.name);
         cleanup_type_info(&$1);
         // func_type is now owned by the function node
@@ -329,6 +330,7 @@ function_definition
         }
 
         $$ = create_function(string_duplicate($2.name), func_type, params, param_count, $3);
+        $$->data.function.is_defined = 1;
         free($2.name);
         cleanup_type_info(&$1);
         // func_type is now owned by the function node
@@ -1300,8 +1302,31 @@ designator
 /* Top-level declaration handling */
 declaration
     : declaration_specifiers init_declarator_list SEMICOLON {
+        // Check if this is a function declaration
+        if ($2.count == 1 && $2.declarators[0].is_function) {
+            type_info_t complete_type = make_complete_type($1, $2.declarators[0]);
+            
+            // Create function node without body (prototype/declaration)
+            ast_node_t **params = $2.declarators[0].params;
+            int param_count = $2.declarators[0].param_count;
+            
+            $$ = create_function(string_duplicate($2.declarators[0].name), 
+                               complete_type, params, param_count, NULL);
+            $$->data.function.is_defined = 0;
+            $$->data.function.is_variadic = $2.declarators[0].is_variadic;
+            
+            // Set extern flag if present
+            if ($1.storage_class == STORAGE_EXTERN) {
+                $$->data.function.storage_class = STORAGE_EXTERN;
+            }
+            
+            free($2.declarators[0].name);
+            free($2.declarators);
+            free($2.initializers);
+            cleanup_type_info(&$1);
+        }
         // Create a declaration for each declarator with proper type
-        if ($2.count == 1) {
+        else if ($2.count == 1) {
             // Single declarator - return it directly
             type_info_t complete_type = make_complete_type($1, $2.declarators[0]);
             $$ = create_declaration(complete_type, 
