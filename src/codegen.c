@@ -319,6 +319,40 @@ static void generate_string_constants(void)
 	}
 }
 
+static int convert_to_boolean(ast_node_t *expr, int expr_temp)
+{
+	// If it's already a comparison, return as-is
+	if (expr->type == AST_BINARY_OP && is_comparison_op(expr->data.binary_op.op)) {
+		return expr_temp;
+	}
+
+	int bool_temp = get_next_temp();
+	char expr_str[32];
+
+	if (expr->type == AST_NUMBER) {
+		snprintf(expr_str, sizeof(expr_str), "%d", expr_temp);
+	} else {
+		snprintf(expr_str, sizeof(expr_str), "%%t%d", expr_temp);
+	}
+
+	// Get the type of the expression
+	type_info_t expr_type = get_expression_type(expr, ctx.symbol_table);
+
+	// Generate appropriate comparison based on type
+	if (expr_type.pointer_level > 0) {
+		// Pointer comparison with null
+		char *type_str = get_llvm_type_string(&expr_type);
+		fprintf(ctx.output, "  %%t%d = icmp ne %s %s, null\n", bool_temp, type_str, expr_str);
+		free(type_str);
+	} else {
+		// Integer comparison with zero
+		fprintf(ctx.output, "  %%t%d = icmp ne i32 %s, 0\n", bool_temp, expr_str);
+	}
+
+	free_type_info(&expr_type);
+	return bool_temp;
+}
+
 // Forward declarations
 static int generate_expression(ast_node_t *node);
 static void generate_statement(ast_node_t *node);
@@ -1265,10 +1299,20 @@ static int generate_expression(ast_node_t *node)
 			}
 		}
 
-		int temp = get_next_temp();
 		char *return_type = get_llvm_type_string(&node->data.call.return_type);
 
-		fprintf(ctx.output, "  %%t%d = call %s @%s(", temp, return_type, node->data.call.name);
+		// Check if function returns void
+		int returns_void = (strcmp(return_type, "void") == 0);
+		int temp = -1;
+
+		if (returns_void) {
+			// For void functions, don't assign to a temporary
+			fprintf(ctx.output, "  call %s @%s(", return_type, node->data.call.name);
+		} else {
+			// For non-void functions, assign to a temporary
+			temp = get_next_temp();
+			fprintf(ctx.output, "  %%t%d = call %s @%s(", temp, return_type, node->data.call.name);
+		}
 
 		for (int i = 0; i < node->data.call.arg_count; i++) {
 			if (i > 0)
@@ -1292,6 +1336,8 @@ static int generate_expression(ast_node_t *node)
 
 		free(arg_temps);
 		free(return_type);
+
+		// Return temp for non-void, -1 for void
 		return temp;
 	}
 
@@ -1509,21 +1555,7 @@ static void generate_statement(ast_node_t *node)
 		char *end_label = generate_label("if_end");
 
 		int cond = generate_expression(node->data.if_stmt.condition);
-		int bool_temp;
-
-		if (node->data.if_stmt.condition->type == AST_BINARY_OP &&
-		    is_comparison_op(node->data.if_stmt.condition->data.binary_op.op)) {
-			bool_temp = cond;
-		} else {
-			bool_temp = get_next_temp();
-			char cond_str[32];
-			if (node->data.if_stmt.condition->type == AST_NUMBER) {
-				snprintf(cond_str, sizeof(cond_str), "%d", cond);
-			} else {
-				snprintf(cond_str, sizeof(cond_str), "%%t%d", cond);
-			}
-			fprintf(ctx.output, "  %%t%d = icmp ne i32 %s, 0\n", bool_temp, cond_str);
-		}
+		int bool_temp = convert_to_boolean(node->data.if_stmt.condition, cond);
 
 		if (node->data.if_stmt.else_stmt) {
 			fprintf(ctx.output, "  br i1 %%t%d, label %%%s, label %%%s\n", bool_temp, then_label,
@@ -1592,21 +1624,7 @@ static void generate_statement(ast_node_t *node)
 		fprintf(ctx.output, "%s:\n", cond_label);
 
 		int cond = generate_expression(node->data.while_stmt.condition);
-		int bool_temp;
-
-		if (node->data.while_stmt.condition->type == AST_BINARY_OP &&
-		    is_comparison_op(node->data.while_stmt.condition->data.binary_op.op)) {
-			bool_temp = cond;
-		} else {
-			bool_temp = get_next_temp();
-			char cond_str[32];
-			if (node->data.while_stmt.condition->type == AST_NUMBER) {
-				snprintf(cond_str, sizeof(cond_str), "%d", cond);
-			} else {
-				snprintf(cond_str, sizeof(cond_str), "%%t%d", cond);
-			}
-			fprintf(ctx.output, "  %%t%d = icmp ne i32 %s, 0\n", bool_temp, cond_str);
-		}
+		int bool_temp = convert_to_boolean(node->data.while_stmt.condition, cond);
 
 		fprintf(ctx.output, "  br i1 %%t%d, label %%%s, label %%%s\n", bool_temp, body_label, end_label);
 
@@ -1665,21 +1683,7 @@ static void generate_statement(ast_node_t *node)
 		// Generate condition
 		if (node->data.for_stmt.condition) {
 			int cond = generate_expression(node->data.for_stmt.condition);
-			int bool_temp;
-
-			if (node->data.for_stmt.condition->type == AST_BINARY_OP &&
-			    is_comparison_op(node->data.for_stmt.condition->data.binary_op.op)) {
-				bool_temp = cond;
-			} else {
-				bool_temp = get_next_temp();
-				char cond_str[32];
-				if (node->data.for_stmt.condition->type == AST_NUMBER) {
-					snprintf(cond_str, sizeof(cond_str), "%d", cond);
-				} else {
-					snprintf(cond_str, sizeof(cond_str), "%%t%d", cond);
-				}
-				fprintf(ctx.output, "  %%t%d = icmp ne i32 %s, 0\n", bool_temp, cond_str);
-			}
+			int bool_temp = convert_to_boolean(node->data.for_stmt.condition, cond);
 
 			fprintf(ctx.output, "  br i1 %%t%d, label %%%s, label %%%s\n", bool_temp, body_label,
 				end_label);
@@ -1748,21 +1752,7 @@ static void generate_statement(ast_node_t *node)
 
 		fprintf(ctx.output, "%s:\n", cond_label);
 		int cond = generate_expression(node->data.do_while_stmt.condition);
-		int bool_temp;
-
-		if (node->data.do_while_stmt.condition->type == AST_BINARY_OP &&
-		    is_comparison_op(node->data.do_while_stmt.condition->data.binary_op.op)) {
-			bool_temp = cond;
-		} else {
-			bool_temp = get_next_temp();
-			char cond_str[32];
-			if (node->data.do_while_stmt.condition->type == AST_NUMBER) {
-				snprintf(cond_str, sizeof(cond_str), "%d", cond);
-			} else {
-				snprintf(cond_str, sizeof(cond_str), "%%t%d", cond);
-			}
-			fprintf(ctx.output, "  %%t%d = icmp ne i32 %s, 0\n", bool_temp, cond_str);
-		}
+		int bool_temp = convert_to_boolean(node->data.do_while_stmt.condition, cond);
 
 		fprintf(ctx.output, "  br i1 %%t%d, label %%%s, label %%%s\n", bool_temp, body_label, end_label);
 
