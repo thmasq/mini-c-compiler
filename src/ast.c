@@ -985,53 +985,39 @@ static void traverse_program(ast_node_t *node, symbol_table_t *table)
 
 static void traverse_function(ast_node_t *node, symbol_table_t *table)
 {
-	if (!node)
-		return;
+    // Set current function
+    set_current_function(table, node->data.function.name);
 
-	symbol_t *func_sym = add_symbol(table, node->data.function.name, SYM_FUNCTION, node->data.function.return_type);
-	if (func_sym) {
-		func_sym->is_function_defined = (node->data.function.body != NULL);
-		func_sym->param_count = node->data.function.param_count;
-		func_sym->is_variadic = node->data.function.is_variadic;
-	}
+    // Enter function scope
+    enter_scope(table);
 
-	enter_scope(table);
-	set_current_function(table, node->data.function.name);
+    // Add function to symbol table
+    symbol_t *func_sym = add_symbol(table, node->data.function.name, SYM_FUNCTION,
+                                     node->data.function.return_type);
+    
+    if (func_sym) {
+        func_sym->is_function_defined = 1;
+        func_sym->param_count = node->data.function.param_count;
+        func_sym->param_symbols = node->data.function.params;
+    }
 
-	for (int i = 0; i < node->data.function.param_count; i++) {
-		ast_node_t *param = node->data.function.params[i];
-		if (!param)
-			continue;
+    // Process parameters
+    for (int i = 0; i < node->data.function.param_count; i++) {
+        traverse_node(node->data.function.params[i], table);
+    }
 
-		const char *name = NULL;
-		type_info_t param_type;
+    // Process function body
+    traverse_node(node->data.function.body, table);
 
-		if (param->type == AST_PARAMETER) {
-			name = param->data.parameter.name;
-			param_type = param->data.parameter.type_info;
-		} else if (param->type == AST_DECLARATION) {
-			name = param->data.declaration.name;
-			param_type = param->data.declaration.type_info;
-		} else {
-			continue;
-		}
+    // Check pending labels before exiting the function
+    check_pending_labels(table);
+    clear_pending_labels(table);
 
-		if (name == NULL) {
-			continue;
-		}
+    // Exit function scope
+    exit_scope(table);
 
-		if (add_symbol(table, name, SYM_VARIABLE, param_type) == NULL) {
-			fprintf(stderr, "Semantic Error: Redeclaration of parameter '%s' in function '%s' at line %d\n",
-				name, node->data.function.name ? node->data.function.name : "(anon)",
-				param->line_number);
-			error_count++;
-		}
-	}
-
-	traverse_node(node->data.function.body, table);
-
-	set_current_function(table, NULL);
-	exit_scope(table);
+    // Clear current function
+    set_current_function(table, NULL);
 }
 
 static void traverse_compound_statement(ast_node_t *node, symbol_table_t *table)
@@ -1190,36 +1176,32 @@ static void traverse_identifier(ast_node_t *node, symbol_table_t *table)
 	}
 }
 
-static void traverse_assignment(ast_node_t *node, symbol_table_t *table)
-{
-	if (!node)
-		return;
+static void traverse_assignment(ast_node_t *node, symbol_table_t *table) {
+    // Traverse both sides first
+    traverse_node(node->data.assignment.lvalue, table);
+    traverse_node(node->data.assignment.value, table);
 
-	if (node->data.assignment.name) {
-		symbol_t *sym = find_symbol(table, node->data.assignment.name);
-		if (!sym) {
-			fprintf(stderr, "Semantic Error: Assignment to undeclared variable '%s' at line %d\n",
-				node->data.assignment.name, node->line_number);
-			error_count++;
-		}
-	} else if (node->data.assignment.lvalue) {
-		traverse_node(node->data.assignment.lvalue, table);
-	}
+    // Validate const correctness
+    if (!can_modify_lvalue(node->data.assignment.lvalue, table)) {
+        fprintf(stderr, "Semantic Error: Attempt to modify const object at line %d\n", 
+                node->line_number);
+        error_count++;
+    }
 
-	traverse_node(node->data.assignment.value, table);
+    // Get types for validation
+    type_info_t lvalue_type = get_expression_type(node->data.assignment.lvalue, table);
+    type_info_t rvalue_type = get_expression_type(node->data.assignment.value, table);
 
-	if (node->data.assignment.lvalue) {
-		type_info_t lvalue_type = get_expression_type(node->data.assignment.lvalue, table);
-		type_info_t rvalue_type = get_expression_type(node->data.assignment.value, table);
+    // Check type compatibility
+    if (is_integer_type(&lvalue_type) && rvalue_type.pointer_level > 0) {
+        fprintf(stderr, "Semantic Error: Assigning a pointer to an integer at line %d\n", 
+                node->line_number);
+        error_count++;
+    }
 
-		if (is_integer_type(&lvalue_type) && rvalue_type.pointer_level > 0) {
-			fprintf(stderr, "Semantic Error: Assigning pointer to integer at line %d\n", node->line_number);
-			error_count++;
-		}
-
-		free_type_info(&lvalue_type);
-		free_type_info(&rvalue_type);
-	}
+    // Clean up
+    free_type_info(&lvalue_type);
+    free_type_info(&rvalue_type);
 }
 
 static void traverse_call(ast_node_t *node, symbol_table_t *table)
@@ -1517,11 +1499,10 @@ static void traverse_goto_stmt(ast_node_t *node, symbol_table_t *table)
 
 static void traverse_node(ast_node_t *node, symbol_table_t *table)
 {
-	if (!node)
-		return;
+    if (!node) return;
 
-	switch (node->type) {
-	// --- Top Level & Scoping ---
+    switch (node->type) {
+        // --- Top Level & Scoping ---
 	case AST_PROGRAM:
 		traverse_program(node, table);
 		break;
@@ -1595,15 +1576,11 @@ static void traverse_node(ast_node_t *node, symbol_table_t *table)
 		traverse_label_stmt(node, table);
 		break;
 	case AST_GOTO_STMT:
-		traverse_goto_stmt(node, table);
-		break;
-	case AST_BREAK_STMT:
-	case AST_CONTINUE_STMT:
-	case AST_EMPTY_STMT:
-		// No children to traverse
-		break;
+		 // Register the goto as pending
+		 register_goto(table, node->data.goto_stmt.label, node->line_number);
+		 break;
 
-	// --- Expressions (Recursive) ---
+        // --- Expressions (Recursive) ---
 	case AST_ASSIGNMENT:
 		traverse_assignment(node, table);
 		break;

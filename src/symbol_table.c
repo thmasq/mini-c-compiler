@@ -124,6 +124,7 @@ symbol_table_t *create_symbol_table(void)
 	table->scope_counter = 0;
 	table->temp_counter = 0;
 	table->current_function = NULL;
+	table->pending_labels = NULL;
 
 	return table;
 }
@@ -193,6 +194,9 @@ void destroy_symbol_table(symbol_table_t *table)
 
 	// Clean up global scope
 	free_scope(table->global_scope);
+
+	// Clean up pending labels
+    clear_pending_labels(table);
 
 	free(table->current_function);
 	free(table);
@@ -385,6 +389,9 @@ size_t calculate_struct_size(symbol_t *struct_sym)
 
 	size_t total_size = 0;
 	size_t max_alignment = 1;
+	size_t current_bit_offset = 0;
+	size_t storage_unit_size = 0;
+	size_t storage_unit_align = 0;
 
 	// Calculate size and alignment for each member
 	for (int i = 0; i < struct_sym->member_count; i++) {
@@ -406,6 +413,34 @@ size_t calculate_struct_size(symbol_t *struct_sym)
 
 		// Add member size
 		total_size += member_size;
+
+		if (member->bit_field_size > 0) {
+			if (storage_unit_size == 0) {
+				storage_unit_size = member->size; // base's size (ex: 4 bytes)
+				storage_unit_align = member->alignment;
+				total_size = align_to(total_size, storage_unit_align);
+			}
+			if (current_bit_offset + member->bit_field_size > (storage_unit_size * 8)) {
+				// close current block
+				total_size += storage_unit_size;
+				// start new block
+				storage_unit_size = member->size;
+				total_size = align_to(total_size, storage_unit_align);
+				current_bit_offset = 0;
+			}
+			member->offset = total_size; // all bit fields share base offset
+			member->enum_value = current_bit_offset; // reuse field to store bit position or create new field
+			current_bit_offset += member->bit_field_size;
+			// do not increment total_size yet (only after block closes)
+		} else {
+			// Close bit field block if it was open
+			if (storage_unit_size != 0) {
+				total_size += storage_unit_size;
+				storage_unit_size = 0;
+				current_bit_offset = 0;
+			}
+			// normal member flow
+		}
 	}
 
 	// Align final size to struct's alignment
@@ -763,10 +798,26 @@ type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table)
 	}
 
 	case AST_BINARY_OP:
-		if (expr->data.binary_op.op >= OP_EQ && expr->data.binary_op.op <= OP_GE) {
-			return create_type_info(string_duplicate("_Bool"), 0, 0, NULL);
-		}
-		return create_type_info(string_duplicate("int"), 0, 0, NULL);
+        // Comparisons return _Bool
+        if (expr->data.binary_op.op >= OP_EQ && expr->data.binary_op.op <= OP_GE) {
+            return create_type_info(string_duplicate("_Bool"), 0, 0, NULL);
+        }
+        // Assignments (simple and compound) return the lvalue's type
+        if (expr->data.binary_op.op == OP_ASSIGN ||
+            expr->data.binary_op.op == OP_ADD_ASSIGN ||
+            expr->data.binary_op.op == OP_SUB_ASSIGN ||
+            expr->data.binary_op.op == OP_MUL_ASSIGN ||
+            expr->data.binary_op.op == OP_DIV_ASSIGN ||
+            expr->data.binary_op.op == OP_MOD_ASSIGN ||
+            expr->data.binary_op.op == OP_LSHIFT_ASSIGN ||
+            expr->data.binary_op.op == OP_RSHIFT_ASSIGN ||
+            expr->data.binary_op.op == OP_BAND_ASSIGN ||
+            expr->data.binary_op.op == OP_BOR_ASSIGN ||
+            expr->data.binary_op.op == OP_BXOR_ASSIGN) {
+            return get_expression_type(expr->data.binary_op.left, table);
+        }
+        // Other operations: for now, promote to int
+        return create_type_info(string_duplicate("int"), 0, 0, NULL);
 
 	case AST_UNARY_OP:
 		if (expr->data.unary_op.op == OP_NOT) {
@@ -959,4 +1010,170 @@ void print_symbol(symbol_t *sym, int indent)
 	}
 
 	printf("\n");
+}
+
+int resolve_typedef(type_info_t *t, symbol_table_t *table)
+{
+    if (!t || !t->base_type || t->is_struct || t->is_union || t->is_enum) return 0;
+    symbol_t *sym = find_symbol(table, t->base_type);
+    if (!sym || sym->sym_type != SYM_TYPEDEF) return 0;
+    type_info_t resolved = deep_copy_type_info(&sym->type_info);
+    // Preserve pointer levels from usage
+    resolved.pointer_level += t->pointer_level;
+    free(t->base_type);
+    *t = resolved;
+    return 1;
+}
+
+int is_runtime_sized(const type_info_t *t)
+{
+    // Explicit VLA
+    if (t->is_vla) return 1;
+
+    // Arrays: if there is no size expression (array_size == NULL),
+    // it is an incomplete array, whose size is not determined at compile time.
+	// Otherwise, considered to have a compile-time known size.
+    return t->is_array && t->array_size == NULL ? 1 : 0;
+}
+
+int validate_storage_combo(symbol_t *sym)
+{
+	if (sym->is_static && sym->is_extern) {
+        fprintf(stderr, "Error: 'static' and 'extern' simultaneously in %s\n", sym->name);
+        return 0;
+    }
+    return 1;
+}
+
+int validate_qualifiers(type_info_t *t1, type_info_t *t2)
+{
+	// Example: prevent removal of const
+    if ((t1->qualifiers & QUAL_CONST) && !(t2->qualifiers & QUAL_CONST)) {
+        fprintf(stderr, "Warning: loss of 'const'\n");
+    }
+    return 1;
+}
+
+int validate_function_redeclaration(symbol_t *old, symbol_t *new)
+{
+    if (old->sym_type != SYM_FUNCTION || new->sym_type != SYM_FUNCTION) return 1;
+    type_info_t *told = &old->type_info;
+    type_info_t *tnew = &new->type_info;
+    if (!is_compatible_type(told, tnew)) {
+        fprintf(stderr, "Return type incompatible in redeclaration of %s\n", old->name);
+        return 0;
+    }
+    if (old->param_count != new->param_count || old->is_variadic != new->is_variadic) {
+        fprintf(stderr, "Signature mismatch in redeclaration of %s\n", old->name);
+        return 0;
+    }
+    // Note: per-parameter validation removed because param_symbols is ast_node_t** and does not have type_info.
+    // Future case: store symbol_t** or type_info_t[] for parameters and compare here.
+    return 1;
+}
+
+int can_modify_lvalue(ast_node_t *lv, symbol_table_t *table)
+{
+	type_info_t t = get_expression_type(lv, table);
+    int ok = !(t.qualifiers & QUAL_CONST);
+    free_type_info(&t);
+    return ok;
+}
+
+void register_goto(symbol_table_t *table, const char *label_name, int line_number)
+{
+    // Check if the label is already defined
+    symbol_t *existing = find_label(table, label_name);
+    if (existing && existing->label_defined) {
+        return; // Label already defined, no need to register as pending
+    }
+
+    // Check if already in the pending list
+    pending_label_t *pending = table->pending_labels;
+    while (pending) {
+        if (strcmp(pending->name, label_name) == 0) {
+            pending->referenced_count++;
+            return; // Already registered
+        }
+        pending = pending->next;
+    }
+
+    // Add new pending label
+    pending_label_t *new_pending = malloc(sizeof(pending_label_t));
+    if (!new_pending) {
+        fprintf(stderr, "Failed to allocate pending label\n");
+        exit(1);
+    }
+
+    new_pending->name = string_duplicate(label_name);
+    new_pending->line_number = line_number;
+    new_pending->referenced_count = 1;
+    new_pending->resolved = 0;
+    new_pending->next = table->pending_labels;
+    table->pending_labels = new_pending;
+}
+
+// Register a label definition
+void register_label_definition(symbol_table_t *table, const char *label_name)
+{
+    // Mark as resolved if it was pending
+    pending_label_t *pending = table->pending_labels;
+    while (pending) {
+        if (strcmp(pending->name, label_name) == 0) {
+            pending->resolved = 1;
+            return;
+        }
+        pending = pending->next;
+    }
+
+    // If it was not pending, no action needed
+    // (the label was defined before any goto)
+}
+
+// Check all pending labels and report errors
+void check_pending_labels(symbol_table_t *table)
+{
+    pending_label_t *pending = table->pending_labels;
+    int error_found = 0;
+
+    while (pending) {
+        if (!pending->resolved) {
+            fprintf(stderr, "Semantic Error: Undefined label '%s' referenced at line %d\n",
+                    pending->name, pending->line_number);
+            error_found = 1;
+        }
+        pending = pending->next;
+    }
+
+    if (error_found) {
+        // Optional: increment global error count
+        extern int error_count;
+        error_count++;
+    }
+}
+
+// Clear all pending labels (called when exiting a function)
+void clear_pending_labels(symbol_table_t *table)
+{
+    pending_label_t *pending = table->pending_labels;
+    while (pending) {
+        pending_label_t *next = pending->next;
+        free(pending->name);
+        free(pending);
+        pending = next;
+    }
+    table->pending_labels = NULL;
+}
+
+// Set current function context
+void set_current_function(symbol_table_t *table, const char *func_name)
+{
+    // Check pending labels from previous function
+    if (table->current_function) {
+        check_pending_labels(table);
+        clear_pending_labels(table);
+    }
+
+    free(table->current_function);
+    table->current_function = string_duplicate(func_name);
 }

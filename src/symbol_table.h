@@ -63,6 +63,12 @@ typedef struct symbol {
 	char *label_name; // For goto labels
 	int label_defined;
 
+	// Forward declaration flag
+	// int is_forward_decl;
+	
+	// Bit field information
+	int bit_field_size; // número de bits (0 se não é bit field)
+
 	// Hash table bucket chaining
 	struct symbol *next;
 } symbol_t;
@@ -76,6 +82,15 @@ typedef struct scope {
 	struct scope *parent;
 } scope_t;
 
+// Pending labels (for goto validation)
+typedef struct pending_label {
+    char *name;
+    int line_number;       // where it was referenced
+    int referenced_count;  // how many times it was used
+    int resolved;          // 1 if the label was defined
+    struct pending_label *next;
+} pending_label_t;
+
 // Symbol table context
 typedef struct symbol_table {
 	scope_t *current_scope;
@@ -83,6 +98,7 @@ typedef struct symbol_table {
 	int scope_counter;
 	int temp_counter;
 	char *current_function;
+	pending_label_t *pending_labels;
 } symbol_table_t;
 
 // Main symbol table functions
@@ -136,5 +152,30 @@ void cleanup_symbol_type_info(symbol_t *sym);
 // Debug functions
 void print_symbol_table(symbol_table_t *table);
 void print_symbol(symbol_t *sym, int indent);
+
+// Resolução de typedefs
+int resolve_typedef(type_info_t *t, symbol_table_t *table);
+
+// Checagem de tipos runtime/incompletos (arrays/VLA)
+int is_runtime_sized(const type_info_t *t);
+
+// Validação de storage class e qualifiers
+int validate_storage_combo(symbol_t *sym);
+int validate_qualifiers(type_info_t *t1, type_info_t *t2);
+
+// Validação de redeclaração de função
+int validate_function_redeclaration(symbol_t *old, symbol_t *new);
+
+// Checagem de modificabilidade (const correctness)
+int can_modify_lvalue(ast_node_t *lv, symbol_table_t *table);
+
+// (Opcional) Para bit fields, se for acessar fora de symbol_table.c:
+// size_t calculate_struct_size_with_bitfields(symbol_t *struct_sym);
+
+// Pending label management
+void register_goto(symbol_table_t *table, const char *label_name, int line_number);
+void register_label_definition(symbol_table_t *table, const char *label_name);
+void check_pending_labels(symbol_table_t *table);
+void clear_pending_labels(symbol_table_t *table);
 
 #endif // SYMBOL_TABLE_H
