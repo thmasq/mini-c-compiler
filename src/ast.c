@@ -1001,12 +1001,23 @@ static void traverse_function(ast_node_t *node, symbol_table_t *table)
         func_sym->param_symbols = node->data.function.params;
     }
 
-    // Process parameters
+    // Process parameters: ADD THEM TO THE SYMBOL TABLE
     for (int i = 0; i < node->data.function.param_count; i++) {
-        traverse_node(node->data.function.params[i], table);
+        ast_node_t *param = node->data.function.params[i];
+        if (param && param->type == AST_PARAMETER) {
+            symbol_t *param_sym = add_symbol(table, param->data.parameter.name, SYM_VARIABLE,
+                                              param->data.parameter.type_info);
+            if (param_sym) {
+                param_sym->is_parameter = 1;
+            } else {
+                fprintf(stderr, "Semantic Error: Duplicate parameter '%s' at line %d\n",
+                        param->data.parameter.name, param->line_number);
+                error_count++;
+            }
+        }
     }
 
-    // Process function body
+    // Process function body (AFTER parameters are in the table)
     traverse_node(node->data.function.body, table);
 
     // Check pending labels before exiting the function
