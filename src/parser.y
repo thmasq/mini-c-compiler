@@ -96,6 +96,7 @@ static void cleanup_type_info(type_info_t *type_info) {
     struct {
         ast_node_t **nodes;
         int count;
+        int is_variadic;
     } node_array;
     struct {
         member_info_t *members;
@@ -313,14 +314,17 @@ external_declaration
 function_definition
     : declaration_specifiers declarator declaration_list compound_statement {
         type_info_t func_type = make_complete_type($1, $2);
+        func_type.is_variadic = $2.is_variadic;
         $$ = create_function(string_duplicate($2.name), func_type, NULL, 0, $4);
         $$->data.function.is_defined = 1;
+        $$->data.function.is_variadic = $2.is_variadic;
         free($2.name);
         cleanup_type_info(&$1);
         // func_type is now owned by the function node
     }
     | declaration_specifiers declarator compound_statement {
         type_info_t func_type = make_complete_type($1, $2);
+        func_type.is_variadic = $2.is_variadic;
         ast_node_t **params = NULL;
         int param_count = 0;
 
@@ -331,6 +335,7 @@ function_definition
 
         $$ = create_function(string_duplicate($2.name), func_type, params, param_count, $3);
         $$->data.function.is_defined = 1;
+        $$->data.function.is_variadic = $2.is_variadic;
         free($2.name);
         cleanup_type_info(&$1);
         // func_type is now owned by the function node
@@ -675,12 +680,14 @@ direct_declarator
         $$.is_function = 1;
         $$.params = $3.nodes;
         $$.param_count = $3.count;
+        $$.is_variadic = $3.is_variadic;
     }
     | direct_declarator LPAREN RPAREN {
         $$ = $1;
         $$.is_function = 1;
         $$.params = NULL;
         $$.param_count = 0;
+        $$.is_variadic = 0;
     }
     ;
 
@@ -707,10 +714,13 @@ type_qualifier_list
     ;
 
 parameter_type_list
-    : parameter_list { $$ = $1; }
+    : parameter_list { 
+        $$ = $1;
+        $$.is_variadic = 0;  // Not variadic
+    }
     | parameter_list COMMA ELLIPSIS {
         $$ = $1;
-        // Mark as variadic - would need to track this in declarator
+        $$.is_variadic = 1;  // Mark as variadic
     }
     ;
 
@@ -1305,6 +1315,7 @@ declaration
         // Check if this is a function declaration
         if ($2.count == 1 && $2.declarators[0].is_function) {
             type_info_t complete_type = make_complete_type($1, $2.declarators[0]);
+            complete_type.is_variadic = $2.declarators[0].is_variadic;
             
             // Create function node without body (prototype/declaration)
             ast_node_t **params = $2.declarators[0].params;

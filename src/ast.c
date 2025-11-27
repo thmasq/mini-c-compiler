@@ -1237,11 +1237,24 @@ static void traverse_call(ast_node_t *node, symbol_table_t *table)
 			node->line_number);
 		error_count++;
 	} else {
-		if (node->data.call.arg_count != func_sym->param_count && !func_sym->is_variadic) {
-			fprintf(stderr, "Semantic Error: Function '%s' expects %d arguments, got %d at line %d\n",
-				node->data.call.name, func_sym->param_count, node->data.call.arg_count,
-				node->line_number);
-			error_count++;
+		// Check argument count for non-variadic functions
+		if (!func_sym->is_variadic) {
+			if (node->data.call.arg_count != func_sym->param_count) {
+				fprintf(stderr,
+					"Semantic Error: Function '%s' expects %d arguments, got %d at line %d\n",
+					node->data.call.name, func_sym->param_count, node->data.call.arg_count,
+					node->line_number);
+				error_count++;
+			}
+		} else {
+			// For variadic functions, check minimum number of arguments
+			if (node->data.call.arg_count < func_sym->param_count) {
+				fprintf(stderr,
+					"Semantic Error: Variadic function '%s' expects at least %d arguments, got %d at line %d\n",
+					node->data.call.name, func_sym->param_count, node->data.call.arg_count,
+					node->line_number);
+				error_count++;
+			}
 		}
 
 		free_type_info(&node->data.call.return_type);
