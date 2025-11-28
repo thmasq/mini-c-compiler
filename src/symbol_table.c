@@ -411,9 +411,6 @@ size_t calculate_struct_size(symbol_t *struct_sym)
 		// Set member offset
 		member->offset = total_size;
 
-		// Add member size
-		total_size += member_size;
-
 		if (member->bit_field_size > 0) {
 			if (storage_unit_size == 0) {
 				storage_unit_size = member->size; // base's size (ex: 4 bytes)
@@ -433,6 +430,9 @@ size_t calculate_struct_size(symbol_t *struct_sym)
 			current_bit_offset += member->bit_field_size;
 			// do not increment total_size yet (only after block closes)
 		} else {
+			// Add member size
+			total_size += member_size;
+			
 			// Close bit field block if it was open
 			if (storage_unit_size != 0) {
 				total_size += storage_unit_size;
