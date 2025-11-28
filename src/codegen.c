@@ -558,7 +558,6 @@ static int generate_expression(ast_node_t *node)
 
 		// Handle compound assignment operators
 		if (node->data.binary_op.op >= OP_ADD_ASSIGN && node->data.binary_op.op <= OP_BXOR_ASSIGN) {
-			// This should be handled in assignment statement, not here
 			fprintf(stderr, "Compound assignment in expression context\n");
 			return -1;
 		}
@@ -576,22 +575,199 @@ static int generate_expression(ast_node_t *node)
 					   : node->data.binary_op.op == OP_GT ? "sgt"
 									      : "sge";
 
-			char L[32], R[32];
-			if (node->data.binary_op.left->type == AST_NUMBER)
+			char L[32];
+			char R[32];
+			if (node->data.binary_op.left->type == AST_NUMBER) {
 				snprintf(L, sizeof(L), "%d", left);
-			else
+			} else {
 				snprintf(L, sizeof(L), "%%t%d", left);
-			if (node->data.binary_op.right->type == AST_NUMBER)
+			}
+			if (node->data.binary_op.right->type == AST_NUMBER) {
 				snprintf(R, sizeof(R), "%d", right);
-			else
+			} else {
 				snprintf(R, sizeof(R), "%%t%d", right);
+			}
 
-			// icmp: operandos i32, resultado i1
+			// icmp: operands i32, result i1
 			fprintf(ctx.output, "  %%t%d = icmp %s i32 %s, %s\n", temp, pred, L, R);
 			return temp;
 		}
 
-		int left_i32 = left, right_i32 = right;
+		type_info_t left_type = get_expression_type(node->data.binary_op.left, ctx.symbol_table);
+		type_info_t right_type = get_expression_type(node->data.binary_op.right, ctx.symbol_table);
+
+		// Case 1: Pointer Addition (ptr + int or int + ptr)
+		if (node->data.binary_op.op == OP_ADD && (left_type.pointer_level > 0 || left_type.is_array ||
+							  right_type.pointer_level > 0 || right_type.is_array)) {
+
+			int ptr_val;
+			int idx_val;
+			type_info_t *ptr_type_ref;
+
+			// Determine which operand is the pointer
+			if (left_type.pointer_level > 0 || left_type.is_array) {
+				ptr_val = left;
+				idx_val = right;
+				ptr_type_ref = &left_type;
+			} else {
+				ptr_val = right;
+				idx_val = left;
+				ptr_type_ref = &right_type;
+			}
+
+			// Format pointer and index strings
+			char ptr_str[32];
+			char idx_str[32];
+
+			if (left_type.pointer_level > 0 || left_type.is_array) {
+				if (node->data.binary_op.left->type == AST_NUMBER) {
+					snprintf(ptr_str, sizeof(ptr_str), "%d", ptr_val);
+				} else {
+					snprintf(ptr_str, sizeof(ptr_str), "%%t%d", ptr_val);
+				}
+			} else {
+				if (node->data.binary_op.right->type == AST_NUMBER) {
+					snprintf(ptr_str, sizeof(ptr_str), "%d", ptr_val);
+				} else {
+					snprintf(ptr_str, sizeof(ptr_str), "%%t%d", ptr_val);
+				}
+			}
+
+			if (left_type.pointer_level > 0 || left_type.is_array) {
+				if (node->data.binary_op.right->type == AST_NUMBER) {
+					snprintf(idx_str, sizeof(idx_str), "%d", idx_val);
+				} else {
+					snprintf(idx_str, sizeof(idx_str), "%%t%d", idx_val);
+				}
+			} else {
+				if (node->data.binary_op.left->type == AST_NUMBER) {
+					snprintf(idx_str, sizeof(idx_str), "%d", idx_val);
+				} else {
+					snprintf(idx_str, sizeof(idx_str), "%%t%d", idx_val);
+				}
+			}
+
+			// Determine element type (type pointed to)
+			type_info_t elem_info = deep_copy_type_info(ptr_type_ref);
+			if (elem_info.is_array) {
+				// Array decays to pointer to element, so element type is just the array's base type
+				elem_info.is_array = 0;
+				// Keep pointer level as is (base type pointers)
+			} else {
+				// Pointer: strip one level
+				elem_info.pointer_level--;
+			}
+			char *elem_type_str = get_llvm_type_string(&elem_info);
+
+			fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %s, i32 %s\n", temp, elem_type_str,
+				elem_type_str, ptr_str, idx_str);
+
+			free(elem_type_str);
+			free_type_info(&elem_info);
+			free_type_info(&left_type);
+			free_type_info(&right_type);
+			return temp;
+		}
+
+		// Case 2: Pointer Subtraction (ptr - int)
+		if (node->data.binary_op.op == OP_SUB && (left_type.pointer_level > 0 || left_type.is_array) &&
+		    (right_type.pointer_level == 0 && !right_type.is_array)) {
+			char ptr_str[32];
+			char idx_str[32];
+
+			if (node->data.binary_op.left->type == AST_NUMBER) {
+				snprintf(ptr_str, sizeof(ptr_str), "%d", left);
+			} else {
+				snprintf(ptr_str, sizeof(ptr_str), "%%t%d", left);
+			}
+
+			if (node->data.binary_op.right->type == AST_NUMBER) {
+				snprintf(idx_str, sizeof(idx_str), "%d", right);
+			} else {
+				snprintf(idx_str, sizeof(idx_str), "%%t%d", right);
+			}
+
+			// Negate index
+			int neg_idx = get_next_temp();
+			fprintf(ctx.output, "  %%t%d = sub i32 0, %s\n", neg_idx, idx_str);
+
+			type_info_t elem_info = deep_copy_type_info(&left_type);
+			if (elem_info.is_array) {
+				elem_info.is_array = 0;
+			} else {
+				elem_info.pointer_level--;
+			}
+			char *elem_type_str = get_llvm_type_string(&elem_info);
+
+			fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %s, i32 %%t%d\n", temp, elem_type_str,
+				elem_type_str, ptr_str, neg_idx);
+
+			free(elem_type_str);
+			free_type_info(&elem_info);
+			free_type_info(&left_type);
+			free_type_info(&right_type);
+			return temp;
+		}
+
+		// Case 3: Pointer Difference (ptr - ptr)
+		if (node->data.binary_op.op == OP_SUB && (left_type.pointer_level > 0 || left_type.is_array) &&
+		    (right_type.pointer_level > 0 || right_type.is_array)) {
+			char ptr_l_str[32];
+			char ptr_r_str[32];
+
+			if (node->data.binary_op.left->type == AST_NUMBER) {
+				snprintf(ptr_l_str, sizeof(ptr_l_str), "%d", left);
+			} else {
+				snprintf(ptr_l_str, sizeof(ptr_l_str), "%%t%d", left);
+			}
+
+			if (node->data.binary_op.right->type == AST_NUMBER) {
+				snprintf(ptr_r_str, sizeof(ptr_r_str), "%d", right);
+			} else {
+				snprintf(ptr_r_str, sizeof(ptr_r_str), "%%t%d", right);
+			}
+
+			// Construct pointer type string for ptrtoint
+			char *ptr_type;
+			if (left_type.is_array) {
+				type_info_t decayed = deep_copy_type_info(&left_type);
+				decayed.is_array = 0;
+				decayed.pointer_level++; // Simulate decay to pointer
+				ptr_type = get_llvm_type_string(&decayed);
+				free_type_info(&decayed);
+			} else {
+				ptr_type = get_llvm_type_string(&left_type);
+			}
+
+			int l_int = get_next_temp();
+			int r_int = get_next_temp();
+			int diff = get_next_temp();
+			int final_res = temp;
+
+			// Ptr to int (use i64 for address diff)
+			fprintf(ctx.output, "  %%t%d = ptrtoint %s %s to i64\n", l_int, ptr_type, ptr_l_str);
+			fprintf(ctx.output, "  %%t%d = ptrtoint %s %s to i64\n", r_int, ptr_type, ptr_r_str);
+			fprintf(ctx.output, "  %%t%d = sub i64 %%t%d, %%t%d\n", diff, l_int, r_int);
+
+			size_t elem_size = get_basic_type_size(left_type.base_type);
+			// NOTE: This basic size check will probably break for structs, but works for basic types
+
+			int res_i64 = get_next_temp();
+			fprintf(ctx.output, "  %%t%d = sdiv i64 %%t%d, %zu\n", res_i64, diff,
+				(elem_size > 0 ? elem_size : 1));
+			fprintf(ctx.output, "  %%t%d = trunc i64 %%t%d to i32\n", final_res, res_i64);
+
+			free(ptr_type);
+			free_type_info(&left_type);
+			free_type_info(&right_type);
+			return final_res;
+		}
+
+		free_type_info(&left_type);
+		free_type_info(&right_type);
+
+		int left_i32 = left;
+		int right_i32 = right;
 
 		if (node->data.binary_op.left->type == AST_BINARY_OP &&
 		    is_comparison_op(node->data.binary_op.left->data.binary_op.op)) {
@@ -643,15 +819,18 @@ static int generate_expression(ast_node_t *node)
 			return -1;
 		}
 
-		char L[32], R[32];
-		if (node->data.binary_op.left->type == AST_NUMBER)
+		char L[32];
+		char R[32];
+		if (node->data.binary_op.left->type == AST_NUMBER) {
 			snprintf(L, sizeof(L), "%d", left_i32);
-		else
+		} else {
 			snprintf(L, sizeof(L), "%%t%d", left_i32);
-		if (node->data.binary_op.right->type == AST_NUMBER)
+		}
+		if (node->data.binary_op.right->type == AST_NUMBER) {
 			snprintf(R, sizeof(R), "%d", right_i32);
-		else
+		} else {
 			snprintf(R, sizeof(R), "%%t%d", right_i32);
+		}
 
 		// Sempre i32 aqui
 		fprintf(ctx.output, "  %%t%d = %s i32 %s, %s\n", temp, op_str, L, R);
@@ -701,8 +880,8 @@ static int generate_expression(ast_node_t *node)
 
 			free(type_str);
 			return final_value;
-
-		} if (node->data.assignment.lvalue) {
+		}
+		if (node->data.assignment.lvalue) {
 			// Assignment to lvalue - similar to statement version but return value
 			// Handle array access, dereference, etc.
 			if (node->data.assignment.lvalue->type == AST_ARRAY_ACCESS) {
@@ -2191,7 +2370,6 @@ static void generate_function(ast_node_t *node)
 }
 
 // Main code generation function
-// Main code generation function - REPLACE the existing generate_llvm_ir() in codegen.c
 void generate_llvm_ir(ast_node_t *ast, FILE *output)
 {
 	// Initialize context
