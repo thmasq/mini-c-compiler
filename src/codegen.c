@@ -367,7 +367,9 @@ static int cast_value(int val_temp, type_info_t *src_type, type_info_t *dest_typ
 
 	int new_temp = get_next_temp();
 
-	if (src_str[0] == 'i' && dest_str[0] == 'i' && isdigit(src_str[1]) && isdigit(dest_str[1])) {
+	if (src_str[0] == 'i' && dest_str[0] == 'i' && isdigit(src_str[1]) && isdigit(dest_str[1]) &&
+	    strchr(src_str, '*') == NULL && strchr(dest_str, '*') == NULL) {
+
 		int src_bits = atoi(src_str + 1);
 		int dest_bits = atoi(dest_str + 1);
 
@@ -378,10 +380,10 @@ static int cast_value(int val_temp, type_info_t *src_type, type_info_t *dest_typ
 			// Sign extend (e.g., int to long)
 			fprintf(ctx.output, "  %%t%d = sext %s %%t%d to %s\n", new_temp, src_str, val_temp, dest_str);
 		}
-	} else if (src_type->pointer_level > 0 && dest_str[0] == 'i') {
+	} else if (src_type->pointer_level > 0 && dest_str[0] == 'i' && strchr(dest_str, '*') == NULL) {
 		// Pointer to Int
 		fprintf(ctx.output, "  %%t%d = ptrtoint %s %%t%d to %s\n", new_temp, src_str, val_temp, dest_str);
-	} else if (src_str[0] == 'i' && dest_type->pointer_level > 0) {
+	} else if (src_str[0] == 'i' && strchr(src_str, '*') == NULL && dest_type->pointer_level > 0) {
 		// Int to Pointer
 		fprintf(ctx.output, "  %%t%d = inttoptr %s %%t%d to %s\n", new_temp, src_str, val_temp, dest_str);
 	} else {
@@ -467,7 +469,8 @@ static int generate_expression(ast_node_t *node)
 				fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s.addr\n", temp, type_str, type_str,
 					sym->llvm_name);
 			} else {
-				fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s\n", temp, type_str, type_str,
+				const char *prefix = sym->is_global ? "@" : "%";
+				fprintf(ctx.output, "  %%t%d = load %s, %s* %s%s\n", temp, type_str, type_str, prefix,
 					sym->llvm_name);
 			}
 		}
@@ -885,18 +888,20 @@ static int generate_expression(ast_node_t *node)
 						type_str, sym->llvm_name);
 				}
 			} else {
+				const char *prefix = sym->is_global ? "@" : "%";
 				if (node->data.assignment.value->type == AST_NUMBER) {
-					fprintf(ctx.output, "  store %s %d, %s* %%%s\n", type_str, value, type_str,
-						sym->llvm_name);
+					fprintf(ctx.output, "  store %s %d, %s* %s%s\n", type_str, value, type_str,
+						prefix, sym->llvm_name);
 				} else {
-					fprintf(ctx.output, "  store %s %%t%d, %s* %%%s\n", type_str, final_value,
-						type_str, sym->llvm_name);
+					fprintf(ctx.output, "  store %s %%t%d, %s* %s%s\n", type_str, final_value,
+						type_str, prefix, sym->llvm_name);
 				}
 			}
 
 			free(type_str);
 			return final_value;
 		}
+
 		if (node->data.assignment.lvalue) {
 			// Assignment to lvalue - similar to statement version but return value
 			// Handle array access, dereference, etc.
@@ -925,15 +930,19 @@ static int generate_expression(ast_node_t *node)
 					char *element_type = get_llvm_type_string(
 						&node->data.assignment.lvalue->data.array_access.element_type);
 
+					const char *prefix = sym->is_global ? "@" : "%";
+
 					if (sym->type_info.is_array) {
 						if (sym->is_parameter) {
 							int ptr_temp = get_next_temp();
-							fprintf(ctx.output, "  %%t%d = load %s*, %s** %%%s.addr\n",
-								ptr_temp, element_type, element_type, sym->llvm_name);
+							char *param_type = get_llvm_type_string(&sym->type_info);
+							fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s.addr\n",
+								ptr_temp, param_type, param_type, sym->llvm_name);
 							fprintf(ctx.output,
 								"  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n",
 								addr_temp, element_type, element_type, ptr_temp,
 								index_str);
+							free(param_type);
 						} else if (sym->type_info.is_vla) {
 							int ptr_temp = get_next_temp();
 							fprintf(ctx.output, "  %%t%d = load %s*, %s** %%%s\n", ptr_temp,
@@ -946,10 +955,18 @@ static int generate_expression(ast_node_t *node)
 							size_t array_length = get_array_length(sym, ctx.symbol_table);
 							fprintf(ctx.output,
 								"  %%t%d = getelementptr [%zu x %s], [%zu x %s]* "
-								"%%%s, i32 0, i32 %s\n",
+								"%s%s, i32 0, i32 %s\n",
 								addr_temp, array_length, element_type, array_length,
-								element_type, sym->llvm_name, index_str);
+								element_type, prefix, sym->llvm_name, index_str);
 						}
+					} else if (sym->type_info.pointer_level > 0) {
+						int ptr_temp = get_next_temp();
+						char *ptr_type = get_llvm_type_string(&sym->type_info);
+						fprintf(ctx.output, "  %%t%d = load %s, %s* %s%s\n", ptr_temp, ptr_type,
+							ptr_type, prefix, sym->llvm_name);
+						fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n",
+							addr_temp, element_type, element_type, ptr_temp, index_str);
+						free(ptr_type);
 					}
 
 					int final_value = value;
@@ -1033,13 +1050,15 @@ static int generate_expression(ast_node_t *node)
 			int old_val_temp = get_next_temp();
 			int new_val_temp = get_next_temp();
 
+			const char *prefix = sym->is_global ? "@" : "%";
+
 			// Load current value
 			if (sym->is_parameter) {
 				fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s.addr\n", old_val_temp, type_str,
 					type_str, sym->llvm_name);
 			} else {
-				fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s\n", old_val_temp, type_str, type_str,
-					sym->llvm_name);
+				fprintf(ctx.output, "  %%t%d = load %s, %s* %s%s\n", old_val_temp, type_str, type_str,
+					prefix, sym->llvm_name);
 			}
 
 			// Calculate new value
@@ -1075,8 +1094,8 @@ static int generate_expression(ast_node_t *node)
 				fprintf(ctx.output, "  store %s %%t%d, %s* %%%s.addr\n", type_str, new_val_temp,
 					type_str, sym->llvm_name);
 			} else {
-				fprintf(ctx.output, "  store %s %%t%d, %s* %%%s\n", type_str, new_val_temp, type_str,
-					sym->llvm_name);
+				fprintf(ctx.output, "  store %s %%t%d, %s* %s%s\n", type_str, new_val_temp, type_str,
+					prefix, sym->llvm_name);
 			}
 
 			free(type_str);
@@ -1250,14 +1269,16 @@ static int generate_expression(ast_node_t *node)
 				fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%%s.addr, i32 0\n", temp,
 					var_type_str, var_type_str, sym->llvm_name);
 			} else {
+				const char *prefix = sym->is_global ? "@" : "%";
 				// For local variables, return their address
-				fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%%s, i32 0\n", temp, var_type_str,
-					var_type_str, sym->llvm_name);
+				fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %s%s, i32 0\n", temp, var_type_str,
+					var_type_str, prefix, sym->llvm_name);
 			}
 
 			free(var_type_str);
 			return temp;
-		} else if (operand->type == AST_ARRAY_ACCESS) {
+		}
+		if (operand->type == AST_ARRAY_ACCESS) {
 			// Handle &array[index] - return address of element
 			ast_node_t *array_node = operand->data.array_access.array;
 			ast_node_t *index_node = operand->data.array_access.index;
@@ -1403,6 +1424,8 @@ static int generate_expression(ast_node_t *node)
 
 			char *element_type = get_llvm_type_string(&node->data.array_access.element_type);
 
+			const char *prefix = sym->is_global ? "@" : "%";
+
 			// Handle different array types
 			if (sym->type_info.is_array || sym->type_info.pointer_level > 0) {
 				if (sym->is_parameter) {
@@ -1427,15 +1450,15 @@ static int generate_expression(ast_node_t *node)
 					    sym->type_info.array_size->type == AST_NUMBER) {
 						size_t array_length = sym->type_info.array_size->data.number.value;
 						fprintf(ctx.output,
-							"  %%t%d = getelementptr [%zu x %s], [%zu x %s]* %%%s, i32 0, i32 %s\n",
+							"  %%t%d = getelementptr [%zu x %s], [%zu x %s]* %s%s, i32 0, i32 %s\n",
 							addr_temp, array_length, element_type, array_length,
-							element_type, sym->llvm_name, index_str);
+							element_type, prefix, sym->llvm_name, index_str);
 					} else {
 						// Incomplete array - treat as pointer
 						int ptr_temp = get_next_temp();
 						char *ptr_type = get_llvm_type_string(&sym->type_info);
-						fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s\n", ptr_temp, ptr_type,
-							ptr_type, sym->llvm_name);
+						fprintf(ctx.output, "  %%t%d = load %s, %s* %s%s\n", ptr_temp, ptr_type,
+							ptr_type, prefix, sym->llvm_name);
 						fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n",
 							addr_temp, element_type, element_type, ptr_temp, index_str);
 						free(ptr_type);
@@ -1444,8 +1467,8 @@ static int generate_expression(ast_node_t *node)
 					// Pointer access
 					int ptr_temp = get_next_temp();
 					char *ptr_type = get_llvm_type_string(&sym->type_info);
-					fprintf(ctx.output, "  %%t%d = load %s, %s* %%%s\n", ptr_temp, ptr_type,
-						ptr_type, sym->llvm_name);
+					fprintf(ctx.output, "  %%t%d = load %s, %s* %s%s\n", ptr_temp, ptr_type,
+						ptr_type, prefix, sym->llvm_name);
 					fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %s\n",
 						addr_temp, element_type, element_type, ptr_temp, index_str);
 					free(ptr_type);
