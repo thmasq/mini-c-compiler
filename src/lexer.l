@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 int line_number = 1;
 int column = 0;
@@ -42,8 +43,29 @@ void count_chars() {
 
 // Process character literals
 char process_char_literal(const char *text) {
+    // text is like 'c' or '\n' or '\x1b'
     if (text[1] == '\\') {
-        // Escape sequence
+        if (text[2] == 'x') {
+            // Hex escape sequence: '\xNN'
+            // Skip ' and \ and x
+            const char *p = text + 3;
+            char hex_buf[32];
+            int k = 0;
+            
+            // Consume hex digits until quote or limit
+            while (*p != '\'' && *p != '\0' && isxdigit((unsigned char)*p) && k < 31) {
+                hex_buf[k++] = *p++;
+            }
+            hex_buf[k] = '\0';
+            
+            if (k > 0) {
+                long val = strtol(hex_buf, NULL, 16);
+                return (char)val;
+            }
+            return 'x'; // Fallback if no digits (unlikely with valid regex)
+        }
+        
+        // Standard escape sequence
         switch (text[2]) {
             case 'n': return '\n';
             case 't': return '\t';
@@ -63,32 +85,70 @@ char process_char_literal(const char *text) {
     }
 }
 
-// Process string literals (basic - doesn't handle all escape sequences)
+// Process string literals (handles escapes including hex)
 char *process_string_literal(const char *text) {
     int len = strlen(text);
-    char *result = malloc(len - 1); // remove quotes
+    // Result can't be longer than source
+    char *result = malloc(len); 
+    if (!result) {
+        fprintf(stderr, "Memory allocation failed\n");
+        exit(1);
+    }
+
     int j = 0;
-    
-    for (int i = 1; i < len - 1; i++) { // skip quotes
+    // Iterate i from 1 to len-2 (skipping start/end quotes)
+    for (int i = 1; i < len - 1; i++) {
         if (text[i] == '\\' && i + 1 < len - 1) {
-            // Handle escape sequences
-            switch (text[i + 1]) {
-                case 'n': result[j++] = '\n'; i++; break;
-                case 't': result[j++] = '\t'; i++; break;
-                case 'r': result[j++] = '\r'; i++; break;
-                case 'b': result[j++] = '\b'; i++; break;
-                case 'f': result[j++] = '\f'; i++; break;
-                case 'a': result[j++] = '\a'; i++; break;
-                case 'v': result[j++] = '\v'; i++; break;
-                case '\\': result[j++] = '\\'; i++; break;
-                case '\'': result[j++] = '\''; i++; break;
-                case '\"': result[j++] = '\"'; i++; break;
-                case '0': result[j++] = '\0'; i++; break;
-                default: 
+            // Hexadecimal escape: \x...
+            if (text[i+1] == 'x') {
+                i += 2; // Move past \ and x
+                
+                char hex_buf[32];
+                int k = 0;
+                
+                // Greedily consume hex digits
+                // Check bounds: i < len - 1 (don't consume closing quote)
+                while (i < len - 1 && isxdigit((unsigned char)text[i]) && k < 31) {
+                    hex_buf[k++] = text[i++];
+                }
+                hex_buf[k] = '\0';
+                
+                if (k > 0) {
+                    long val = strtol(hex_buf, NULL, 16);
+                    result[j++] = (char)val;
+                } else {
+                    // \x followed by non-hex or quote immediately? 
+                    // Treat as literal \x
                     result[j++] = '\\';
-                    result[j++] = text[i + 1];
-                    i++;
-                    break;
+                    result[j++] = 'x';
+                }
+                
+                // The loop increment will happen after this block, 
+                // but we are currently at the character *after* the hex sequence.
+                // We need to decrement i by 1 because the for-loop does i++
+                i--;
+            }
+            // Standard escapes
+            else {
+                switch (text[i + 1]) {
+                    case 'n': result[j++] = '\n'; i++; break;
+                    case 't': result[j++] = '\t'; i++; break;
+                    case 'r': result[j++] = '\r'; i++; break;
+                    case 'b': result[j++] = '\b'; i++; break;
+                    case 'f': result[j++] = '\f'; i++; break;
+                    case 'a': result[j++] = '\a'; i++; break;
+                    case 'v': result[j++] = '\v'; i++; break;
+                    case '\\': result[j++] = '\\'; i++; break;
+                    case '\'': result[j++] = '\''; i++; break;
+                    case '\"': result[j++] = '\"'; i++; break;
+                    case '0': result[j++] = '\0'; i++; break;
+                    default: 
+                        // Unknown escape, keep backslash and char
+                        result[j++] = '\\';
+                        result[j++] = text[i + 1];
+                        i++;
+                        break;
+                }
             }
         } else {
             result[j++] = text[i];
@@ -172,7 +232,7 @@ IS              ((u|U)|(u|U)?(l|L|ll|LL)|(l|L|ll|LL)(u|U))
 "volatile"              { count_chars(); return VOLATILE; }
 "while"                 { count_chars(); return WHILE; }
 
-{L}({L}|{D})*           { count_chars(); 
+{L}({L}|{D})* { count_chars(); 
                           yylval.string = string_duplicate(yytext); 
                           return IDENTIFIER; 
                         }
@@ -192,7 +252,7 @@ IS              ((u|U)|(u|U)?(l|L|ll|LL)|(l|L|ll|LL)(u|U))
 
 L?'(\\.|[^\\'\n])+'     { count_chars(); 
                           yylval.character = process_char_literal(yytext); 
-                          return CONSTANT; 
+                          return CHARACTER; 
                         }
 
 {D}+{E}{FS}?            { count_chars(); 
