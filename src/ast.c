@@ -1715,6 +1715,308 @@ int check_statement_types(ast_node_t *stmt, symbol_table_t *table)
 	return error_count == 0;
 }
 
+// =============================
+// optimization (constant folding)
+// =============================
+
+static int eval_binary_int(binary_op_t op, int a, int b, int *out)
+{
+	switch (op) {
+	case OP_ADD: *out = a + b; return 1;
+	case OP_SUB: *out = a - b; return 1;
+	case OP_MUL: *out = a * b; return 1;
+	case OP_DIV:
+		if (b == 0) return 0; 
+		*out = a / b;
+		return 1;
+	case OP_MOD:
+		if (b == 0) return 0;
+		*out = a % b;
+		return 1;
+
+	case OP_EQ:  *out = (a == b); return 1;
+	case OP_NE:  *out = (a != b); return 1;
+	case OP_LT:  *out = (a <  b); return 1;
+	case OP_LE:  *out = (a <= b); return 1;
+	case OP_GT:  *out = (a >  b); return 1;
+	case OP_GE:  *out = (a >= b); return 1;
+
+	case OP_LAND: *out = (a != 0 && b != 0); return 1;
+	case OP_LOR:  *out = (a != 0 || b != 0); return 1;
+
+	case OP_BAND: *out = (a & b);  return 1;
+	case OP_BOR:  *out = (a | b);  return 1;
+	case OP_BXOR: *out = (a ^ b);  return 1;
+	case OP_LSHIFT: *out = (a << b); return 1;
+	case OP_RSHIFT: *out = (a >> b); return 1;
+
+	default:
+		return 0; 
+	}
+}
+
+static int eval_unary_int(unary_op_t op, int a, int *out)
+{
+	switch (op) {
+	case OP_NEG:   *out = -a;         return 1;
+	case OP_NOT:   *out = (a == 0);   return 1; 
+	case OP_BNOT:  *out = ~a;         return 1;
+	default:
+		return 0;
+	}
+}
+
+// Forward
+static ast_node_t *fold_constants_node(ast_node_t *node);
+
+static ast_node_t *fold_constants_expr(ast_node_t *node)
+{
+	if (!node) return NULL;
+
+	switch (node->type) {
+	case AST_BINARY_OP: {
+		node->data.binary_op.left  = fold_constants_node(node->data.binary_op.left);
+		node->data.binary_op.right = fold_constants_node(node->data.binary_op.right);
+
+		ast_node_t *L = node->data.binary_op.left;
+		ast_node_t *R = node->data.binary_op.right;
+
+		if (L && R && L->type == AST_NUMBER && R->type == AST_NUMBER) {
+			int res;
+			if (eval_binary_int(node->data.binary_op.op,
+					L->data.number.value,
+					R->data.number.value,
+			&res)) {
+				int line = node->line_number;
+				int col  = node->column;
+				free_ast(node); 
+				ast_node_t *n = create_number(res);
+				n->line_number = line;
+				n->column = col;
+				return n;
+			}
+		}
+		return node;
+	}
+	case AST_UNARY_OP: {
+		node->data.unary_op.operand = fold_constants_node(node->data.unary_op.operand);
+		ast_node_t *opnd = node->data.unary_op.operand;
+
+		if (opnd && opnd->type == AST_NUMBER) {
+			int res;
+			if (eval_unary_int(node->data.unary_op.op,
+			opnd->data.number.value,
+			&res)) {
+				int line = node->line_number;
+				int col  = node->column;
+				free_ast(node);
+				ast_node_t *n = create_number(res);
+				n->line_number = line;
+				n->column = col;
+				return n;
+			}
+		}
+		return node;
+	}
+	default:
+		return node;
+	}
+}
+
+static ast_node_t *fold_constants_node(ast_node_t *node)
+{
+	if (!node) return NULL;
+
+	switch (node->type) {
+	case AST_PROGRAM:
+		for (int i = 0; i < node->data.program.decl_count; i++) {
+			node->data.program.declarations[i] =
+				fold_constants_node(node->data.program.declarations[i]);
+		}
+		return node;
+
+	case AST_FUNCTION:
+		if (node->data.function.body)
+			node->data.function.body = fold_constants_node(node->data.function.body);
+		return node;
+
+	case AST_COMPOUND_STMT:
+		for (int i = 0; i < node->data.compound.stmt_count; i++) {
+			node->data.compound.statements[i] =
+				fold_constants_node(node->data.compound.statements[i]);
+		}
+		return node;
+
+	case AST_DECLARATION:
+		if (node->data.declaration.init)
+			node->data.declaration.init =
+				fold_constants_node(node->data.declaration.init);
+		return node;
+
+	case AST_ARRAY_DECL:
+		if (node->data.array_decl.size)
+			node->data.array_decl.size =
+				fold_constants_node(node->data.array_decl.size);
+		return node;
+
+	case AST_RETURN_STMT:
+		if (node->data.return_stmt.value)
+			node->data.return_stmt.value =
+				fold_constants_node(node->data.return_stmt.value);
+		return node;
+
+	case AST_EXPR_STMT:
+		if (node->data.expr_stmt.expr)
+			node->data.expr_stmt.expr =
+				fold_constants_node(node->data.expr_stmt.expr);
+		return node;
+
+	case AST_ASSIGNMENT:
+		if (node->data.assignment.lvalue)
+			node->data.assignment.lvalue =
+				fold_constants_node(node->data.assignment.lvalue);
+		if (node->data.assignment.value)
+			node->data.assignment.value =
+				fold_constants_node(node->data.assignment.value);
+		return node;
+
+	case AST_IF_STMT:
+		if (node->data.if_stmt.condition)
+			node->data.if_stmt.condition =
+				fold_constants_node(node->data.if_stmt.condition);
+		if (node->data.if_stmt.then_stmt)
+			node->data.if_stmt.then_stmt =
+				fold_constants_node(node->data.if_stmt.then_stmt);
+		if (node->data.if_stmt.else_stmt)
+			node->data.if_stmt.else_stmt =
+				fold_constants_node(node->data.if_stmt.else_stmt);
+		return node;
+
+	case AST_WHILE_STMT:
+		if (node->data.while_stmt.condition)
+			node->data.while_stmt.condition =
+				fold_constants_node(node->data.while_stmt.condition);
+		if (node->data.while_stmt.body)
+			node->data.while_stmt.body =
+				fold_constants_node(node->data.while_stmt.body);
+		return node;
+
+	case AST_FOR_STMT:
+		if (node->data.for_stmt.init)
+			node->data.for_stmt.init =
+				fold_constants_node(node->data.for_stmt.init);
+		if (node->data.for_stmt.condition)
+			node->data.for_stmt.condition =
+				fold_constants_node(node->data.for_stmt.condition);
+		if (node->data.for_stmt.update)
+			node->data.for_stmt.update =
+				fold_constants_node(node->data.for_stmt.update);
+		if (node->data.for_stmt.body)
+			node->data.for_stmt.body =
+				fold_constants_node(node->data.for_stmt.body);
+		return node;
+
+	case AST_SWITCH_STMT:
+		if (node->data.switch_stmt.expression)
+			node->data.switch_stmt.expression =
+				fold_constants_node(node->data.switch_stmt.expression);
+		if (node->data.switch_stmt.body)
+			node->data.switch_stmt.body =
+				fold_constants_node(node->data.switch_stmt.body);
+		return node;
+
+	case AST_CASE_STMT:
+		if (node->data.case_stmt.value)
+			node->data.case_stmt.value =
+				fold_constants_node(node->data.case_stmt.value);
+		if (node->data.case_stmt.statement)
+			node->data.case_stmt.statement =
+				fold_constants_node(node->data.case_stmt.statement);
+		return node;
+
+	case AST_DEFAULT_STMT:
+		if (node->data.default_stmt.statement)
+			node->data.default_stmt.statement =
+				fold_constants_node(node->data.default_stmt.statement);
+		return node;
+
+	case AST_ARRAY_ACCESS:
+		if (node->data.array_access.array)
+			node->data.array_access.array =
+				fold_constants_node(node->data.array_access.array);
+		if (node->data.array_access.index)
+			node->data.array_access.index =
+				fold_constants_node(node->data.array_access.index);
+		return node;
+
+	case AST_ADDRESS_OF:
+		if (node->data.address_of.operand)
+			node->data.address_of.operand =
+				fold_constants_node(node->data.address_of.operand);
+		return node;
+
+	case AST_DEREFERENCE:
+		if (node->data.dereference.operand)
+			node->data.dereference.operand =
+				fold_constants_node(node->data.dereference.operand);
+		return node;
+
+	case AST_CONDITIONAL:
+		if (node->data.conditional.condition)
+			node->data.conditional.condition =
+				fold_constants_node(node->data.conditional.condition);
+		if (node->data.conditional.true_expr)
+			node->data.conditional.true_expr =
+				fold_constants_node(node->data.conditional.true_expr);
+		if (node->data.conditional.false_expr)
+			node->data.conditional.false_expr =
+				fold_constants_node(node->data.conditional.false_expr);
+		return node;
+
+	case AST_CALL:
+		for (int i = 0; i < node->data.call.arg_count; i++) {
+			node->data.call.args[i] =
+				fold_constants_node(node->data.call.args[i]);
+		}
+		return node;
+
+	case AST_BINARY_OP:
+	case AST_UNARY_OP:
+		return fold_constants_expr(node);
+
+	case AST_IDENTIFIER:
+	case AST_NUMBER:
+	case AST_STRING_LITERAL:
+	case AST_CHARACTER:
+	case AST_BREAK_STMT:
+	case AST_CONTINUE_STMT:
+	case AST_EMPTY_STMT:
+	case AST_GOTO_STMT:
+	case AST_LABEL_STMT:
+	case AST_SIZEOF:
+	case AST_STRUCT_DECL:
+	case AST_UNION_DECL:
+	case AST_ENUM_DECL:
+	case AST_PARAMETER:
+	case AST_INITIALIZER_LIST:
+	case AST_TYPEDEF:
+	case AST_MEMBER_ACCESS:
+	case AST_PTR_MEMBER_ACCESS:
+	case AST_CAST:
+	case AST_INCREMENT:
+	case AST_DECREMENT:
+		return node;
+
+	default:
+		return node;
+	}
+}
+
+ast_node_t *optimize_ast(ast_node_t *ast)
+{
+	return fold_constants_node(ast);
+}
+
 static const char *binop_str(binary_op_t op)
 {
 	switch (op) {
