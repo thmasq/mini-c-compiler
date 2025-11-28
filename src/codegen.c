@@ -567,32 +567,6 @@ static int generate_expression(ast_node_t *node)
 		int right = generate_expression(node->data.binary_op.right);
 		int temp = get_next_temp();
 
-		if (is_comparison_op(node->data.binary_op.op)) {
-			const char *pred = node->data.binary_op.op == OP_EQ   ? "eq"
-					   : node->data.binary_op.op == OP_NE ? "ne"
-					   : node->data.binary_op.op == OP_LT ? "slt"
-					   : node->data.binary_op.op == OP_LE ? "sle"
-					   : node->data.binary_op.op == OP_GT ? "sgt"
-									      : "sge";
-
-			char L[32];
-			char R[32];
-			if (node->data.binary_op.left->type == AST_NUMBER) {
-				snprintf(L, sizeof(L), "%d", left);
-			} else {
-				snprintf(L, sizeof(L), "%%t%d", left);
-			}
-			if (node->data.binary_op.right->type == AST_NUMBER) {
-				snprintf(R, sizeof(R), "%d", right);
-			} else {
-				snprintf(R, sizeof(R), "%%t%d", right);
-			}
-
-			// icmp: operands i32, result i1
-			fprintf(ctx.output, "  %%t%d = icmp %s i32 %s, %s\n", temp, pred, L, R);
-			return temp;
-		}
-
 		type_info_t left_type = get_expression_type(node->data.binary_op.left, ctx.symbol_table);
 		type_info_t right_type = get_expression_type(node->data.binary_op.right, ctx.symbol_table);
 
@@ -750,7 +724,6 @@ static int generate_expression(ast_node_t *node)
 			fprintf(ctx.output, "  %%t%d = sub i64 %%t%d, %%t%d\n", diff, l_int, r_int);
 
 			size_t elem_size = get_basic_type_size(left_type.base_type);
-			// NOTE: This basic size check will probably break for structs, but works for basic types
 
 			int res_i64 = get_next_temp();
 			fprintf(ctx.output, "  %%t%d = sdiv i64 %%t%d, %zu\n", res_i64, diff,
@@ -763,25 +736,68 @@ static int generate_expression(ast_node_t *node)
 			return final_res;
 		}
 
-		free_type_info(&left_type);
-		free_type_info(&right_type);
+		// If we reach here, we are doing arithmetic or comparisons on numbers.
+
+		// 1. Define target type (int/i32)
+		type_info_t int_type = {0};
+		int_type.base_type = "int";
 
 		int left_i32 = left;
 		int right_i32 = right;
 
+		// 2. Promote Left Operand
 		if (node->data.binary_op.left->type == AST_BINARY_OP &&
 		    is_comparison_op(node->data.binary_op.left->data.binary_op.op)) {
+			// Convert boolean i1 -> i32
 			int z = get_next_temp();
 			fprintf(ctx.output, "  %%t%d = zext i1 %%t%d to i32\n", z, left);
 			left_i32 = z;
+		} else if (node->data.binary_op.left->type != AST_NUMBER) {
+			// Cast char/short -> i32 (sext/zext)
+			left_i32 = cast_value(left, &left_type, &int_type);
 		}
+
+		// 3. Promote Right Operand
 		if (node->data.binary_op.right->type == AST_BINARY_OP &&
 		    is_comparison_op(node->data.binary_op.right->data.binary_op.op)) {
 			int z = get_next_temp();
 			fprintf(ctx.output, "  %%t%d = zext i1 %%t%d to i32\n", z, right);
 			right_i32 = z;
+		} else if (node->data.binary_op.right->type != AST_NUMBER) {
+			right_i32 = cast_value(right, &right_type, &int_type);
 		}
 
+		free_type_info(&left_type);
+		free_type_info(&right_type);
+
+		// Handle Comparison Operations
+		if (is_comparison_op(node->data.binary_op.op)) {
+			const char *pred = node->data.binary_op.op == OP_EQ   ? "eq"
+					   : node->data.binary_op.op == OP_NE ? "ne"
+					   : node->data.binary_op.op == OP_LT ? "slt"
+					   : node->data.binary_op.op == OP_LE ? "sle"
+					   : node->data.binary_op.op == OP_GT ? "sgt"
+									      : "sge";
+
+			char L[32];
+			char R[32];
+			if (node->data.binary_op.left->type == AST_NUMBER) {
+				snprintf(L, sizeof(L), "%d", left_i32);
+			} else {
+				snprintf(L, sizeof(L), "%%t%d", left_i32);
+			}
+			if (node->data.binary_op.right->type == AST_NUMBER) {
+				snprintf(R, sizeof(R), "%d", right_i32);
+			} else {
+				snprintf(R, sizeof(R), "%%t%d", right_i32);
+			}
+
+			// icmp: operands i32, result i1
+			fprintf(ctx.output, "  %%t%d = icmp %s i32 %s, %s\n", temp, pred, L, R);
+			return temp;
+		}
+
+		// Handle Generic Arithmetic Operations
 		const char *op_str = NULL;
 		switch (node->data.binary_op.op) {
 		case OP_ADD:
@@ -832,7 +848,7 @@ static int generate_expression(ast_node_t *node)
 			snprintf(R, sizeof(R), "%%t%d", right_i32);
 		}
 
-		// Sempre i32 aqui
+		// Opcode uses i32 operands
 		fprintf(ctx.output, "  %%t%d = %s i32 %s, %s\n", temp, op_str, L, R);
 		return temp;
 	}

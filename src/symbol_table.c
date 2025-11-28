@@ -766,6 +766,55 @@ type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table)
 		if (expr->data.binary_op.op >= OP_EQ && expr->data.binary_op.op <= OP_GE) {
 			return create_type_info(string_duplicate("_Bool"), 0, 0, NULL);
 		}
+
+		type_info_t left_type = get_expression_type(expr->data.binary_op.left, table);
+		type_info_t right_type = get_expression_type(expr->data.binary_op.right, table);
+
+		// Case 1: Pointer + Int or Int + Pointer
+		if (expr->data.binary_op.op == OP_ADD) {
+			if (left_type.pointer_level > 0 || left_type.is_array) {
+				free_type_info(&right_type);
+				// Array decays to pointer
+				if (left_type.is_array) {
+					left_type.is_array = 0;
+					left_type.pointer_level++;
+				}
+				return left_type;
+			}
+			if (right_type.pointer_level > 0 || right_type.is_array) {
+				free_type_info(&left_type);
+				// Array decays to pointer
+				if (right_type.is_array) {
+					right_type.is_array = 0;
+					right_type.pointer_level++;
+				}
+				return right_type;
+			}
+		}
+
+		// Case 2: Pointer - Int
+		if (expr->data.binary_op.op == OP_SUB) {
+			if ((left_type.pointer_level > 0 || left_type.is_array) &&
+			    (right_type.pointer_level == 0 && !right_type.is_array)) {
+				free_type_info(&right_type);
+				// Array decays to pointer
+				if (left_type.is_array) {
+					left_type.is_array = 0;
+					left_type.pointer_level++;
+				}
+				return left_type;
+			}
+			// Pointer - Pointer (Result is integer/long)
+			if ((left_type.pointer_level > 0 || left_type.is_array) &&
+			    (right_type.pointer_level > 0 || right_type.is_array)) {
+				free_type_info(&left_type);
+				free_type_info(&right_type);
+				return create_type_info(string_duplicate("long"), 0, 0, NULL);
+			}
+		}
+
+		free_type_info(&left_type);
+		free_type_info(&right_type);
 		return create_type_info(string_duplicate("int"), 0, 0, NULL);
 
 	case AST_UNARY_OP:
