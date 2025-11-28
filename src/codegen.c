@@ -1368,17 +1368,50 @@ static void generate_statement(ast_node_t *node)
 		}
 
 		char *type_str = get_llvm_type_string(&sym->type_info);
-		fprintf(ctx.output, "  %%%s = alloca %s\n", sym->llvm_name, type_str);
 
-		if (node->data.declaration.init) {
-			int init_value = generate_expression(node->data.declaration.init);
+		if (sym->is_global) {
+			fprintf(ctx.output, "@%s = global %s ", sym->llvm_name, type_str);
 
-			if (node->data.declaration.init->type == AST_NUMBER) {
-				fprintf(ctx.output, "  store %s %d, %s* %%%s\n", type_str, init_value, type_str,
-					sym->llvm_name);
+			if (node->data.declaration.init) {
+				if (node->data.declaration.init->type == AST_NUMBER) {
+					fprintf(ctx.output, "%d", node->data.declaration.init->data.number.value);
+				} else if (node->data.declaration.init->type == AST_CHARACTER) {
+					fprintf(ctx.output, "%d",
+						(int)node->data.declaration.init->data.character.value);
+				} else if (node->data.declaration.init->type == AST_STRING_LITERAL) {
+					int str_id = store_string_literal(
+						node->data.declaration.init->data.string_literal.value);
+					size_t len = node->data.declaration.init->data.string_literal.length + 1;
+					fprintf(ctx.output,
+						"getelementptr inbounds ([%zu x i8], [%zu x i8]* @.str%d, i32 0, i32 0)",
+						len, len, str_id);
+				} else {
+					fprintf(ctx.output, "0");
+				}
 			} else {
-				fprintf(ctx.output, "  store %s %%t%d, %s* %%%s\n", type_str, init_value, type_str,
-					sym->llvm_name);
+				if (sym->type_info.is_array || sym->type_info.is_struct || sym->type_info.is_union) {
+					fprintf(ctx.output, "zeroinitializer");
+				} else if (sym->type_info.pointer_level > 0) {
+					fprintf(ctx.output, "null");
+				} else {
+					fprintf(ctx.output, "0");
+				}
+			}
+			fprintf(ctx.output, "\n");
+		} else {
+			fprintf(ctx.output, "  %%%s = alloca %s\n", sym->llvm_name, type_str);
+
+			if (node->data.declaration.init) {
+				int init_value = generate_expression(node->data.declaration.init);
+
+				if (node->data.declaration.init->type == AST_NUMBER ||
+				    node->data.declaration.init->type == AST_CHARACTER) {
+					fprintf(ctx.output, "  store %s %d, %s* %%%s\n", type_str, init_value, type_str,
+						sym->llvm_name);
+				} else {
+					fprintf(ctx.output, "  store %s %%t%d, %s* %%%s\n", type_str, init_value,
+						type_str, sym->llvm_name);
+				}
 			}
 		}
 
@@ -1389,8 +1422,9 @@ static void generate_statement(ast_node_t *node)
 	case AST_ARRAY_DECL: {
 		symbol_t *sym = add_symbol(ctx.symbol_table, node->data.array_decl.name, SYM_VARIABLE,
 					   node->data.array_decl.type_info);
-		if (!sym)
+		if (!sym) {
 			return;
+		}
 
 		if (node->data.array_decl.is_vla) {
 			// Variable Length Array
@@ -1415,8 +1449,15 @@ static void generate_statement(ast_node_t *node)
 			if (node->data.array_decl.size && node->data.array_decl.size->type == AST_NUMBER) {
 				int array_size = node->data.array_decl.size->data.number.value;
 				char *element_type = get_llvm_type_string(&node->data.array_decl.type_info);
-				fprintf(ctx.output, "  %%%s = alloca [%d x %s]\n", sym->llvm_name, array_size,
-					element_type);
+
+				if (sym->is_global) {
+					fprintf(ctx.output, "@%s = global [%d x %s] zeroinitializer\n", sym->llvm_name,
+						array_size, element_type);
+				} else {
+					fprintf(ctx.output, "  %%%s = alloca [%d x %s]\n", sym->llvm_name, array_size,
+						element_type);
+				}
+
 				free(element_type);
 			}
 		}

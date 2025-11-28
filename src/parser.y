@@ -444,6 +444,39 @@ struct_or_union_specifier
         $$ = create_type_info(string_duplicate($2), 0, 0, NULL);
         $$.is_struct = (strcmp($1, "struct") == 0);
         $$.is_union = (strcmp($1, "union") == 0);
+
+        if (global_symbol_table) {
+            symbol_type_t sym_type = $$.is_struct ? SYM_STRUCT : SYM_UNION;
+            symbol_t *struct_sym = add_symbol(global_symbol_table, $2, sym_type, $$);
+
+            if (struct_sym) {
+                for (int i = 0; i < $4.count; i++) {
+                    ast_node_t *decl_node = $4.nodes[i];
+                    
+                    if (decl_node->type == AST_DECLARATION) {
+                        char *member_name = decl_node->data.declaration.name;
+                        type_info_t member_type = decl_node->data.declaration.type_info;
+
+                        symbol_t *member = create_symbol(member_name, SYM_VARIABLE, member_type);
+                        
+                        member->size = calculate_type_size(&member_type, global_symbol_table);
+                        member->alignment = calculate_type_alignment(&member_type, global_symbol_table);
+
+                        add_struct_member(struct_sym, member);
+                    }
+                    free_ast(decl_node);
+                }
+                
+                calculate_struct_offsets(struct_sym);
+            } else {
+                for (int i = 0; i < $4.count; i++) free_ast($4.nodes[i]);
+            }
+            free($4.nodes);
+        } else {
+             for (int i = 0; i < $4.count; i++) free_ast($4.nodes[i]);
+             free($4.nodes);
+        }
+
         free($1);
         free($2);
     }
@@ -486,8 +519,30 @@ struct_declaration
         $$.nodes = malloc($$.count * sizeof(ast_node_t*));
         for (int i = 0; i < $$.count; i++) {
             member_info_t *member = &$2.members[i];
-            type_info_t member_type = make_complete_type($1, make_declarator(member->name, 0, 0, NULL));
+            
+            declarator_t member_decl;
+            member_decl.name = member->name;
+            member_decl.pointer_level = member->type.pointer_level;
+            
+            if (member->type.array_size != NULL) {
+                member_decl.is_array = 1;
+                member_decl.array_size = member->type.array_size;
+            } else {
+                member_decl.is_array = member->type.is_array;
+                member_decl.array_size = NULL;
+            }
+            
+            member_decl.is_function = member->type.is_function;
+            member_decl.params = member->type.param_types;
+            member_decl.param_count = member->type.param_count;
+            member_decl.is_variadic = member->type.is_variadic;
+
+            type_info_t member_type = make_complete_type($1, member_decl);
+            
             $$.nodes[i] = create_declaration(member_type, string_duplicate(member->name), NULL);
+            
+            if (member->type.base_type) free(member->type.base_type);
+            if (member->name) free(member->name);
         }
         free($2.members);
         cleanup_type_info(&$1);
@@ -551,10 +606,54 @@ enum_specifier
     : ENUM LBRACE enumerator_list RBRACE {
         $$ = create_type_info(string_duplicate("enum"), 0, 0, NULL);
         $$.is_enum = 1;
+
+        if (global_symbol_table) {
+            int current_enum_val = 0;
+            for (int i = 0; i < $3.count; i++) {
+                enum_value_t *ev = $3.values[i];
+                
+                if (ev->value_expr) {
+                    current_enum_val = ev->value;
+                } else {
+                    ev->value = current_enum_val;
+                }
+
+                add_enum_constant(global_symbol_table, ev->name, current_enum_val);
+                
+                current_enum_val++;
+
+                if (ev->name) free(ev->name);
+                if (ev->value_expr) free_ast(ev->value_expr);
+                free(ev);
+            }
+            // Free the list array itself
+            free($3.values);
+        }
     }
     | ENUM IDENTIFIER LBRACE enumerator_list RBRACE {
         $$ = create_type_info(string_duplicate($2), 0, 0, NULL);
         $$.is_enum = 1;
+
+        if (global_symbol_table) {
+            int current_enum_val = 0;
+            for (int i = 0; i < $4.count; i++) {
+                enum_value_t *ev = $4.values[i];
+                
+                if (ev->value_expr) {
+                    current_enum_val = ev->value;
+                } else {
+                    ev->value = current_enum_val;
+                }
+
+                add_enum_constant(global_symbol_table, ev->name, current_enum_val);
+                current_enum_val++;
+
+                if (ev->name) free(ev->name);
+                if (ev->value_expr) free_ast(ev->value_expr);
+                free(ev);
+            }
+            free($4.values);
+        }
         free($2);
     }
     | ENUM LBRACE enumerator_list COMMA RBRACE {
