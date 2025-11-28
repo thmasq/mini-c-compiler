@@ -881,8 +881,13 @@ static int generate_expression(ast_node_t *node)
 			// Store the value
 			if (sym->is_parameter) {
 				if (node->data.assignment.value->type == AST_NUMBER) {
-					fprintf(ctx.output, "  store %s %d, %s* %%%s.addr\n", type_str, value, type_str,
-						sym->llvm_name);
+					if (sym->type_info.pointer_level > 0 && value == 0) {
+						fprintf(ctx.output, "  store %s null, %s* %%%s.addr\n", type_str,
+							type_str, sym->llvm_name);
+					} else {
+						fprintf(ctx.output, "  store %s %d, %s* %%%s.addr\n", type_str, value,
+							type_str, sym->llvm_name);
+					}
 				} else {
 					fprintf(ctx.output, "  store %s %%t%d, %s* %%%s.addr\n", type_str, final_value,
 						type_str, sym->llvm_name);
@@ -890,8 +895,13 @@ static int generate_expression(ast_node_t *node)
 			} else {
 				const char *prefix = sym->is_global ? "@" : "%";
 				if (node->data.assignment.value->type == AST_NUMBER) {
-					fprintf(ctx.output, "  store %s %d, %s* %s%s\n", type_str, value, type_str,
-						prefix, sym->llvm_name);
+					if (sym->type_info.pointer_level > 0 && value == 0) {
+						fprintf(ctx.output, "  store %s null, %s* %s%s\n", type_str, type_str,
+							prefix, sym->llvm_name);
+					} else {
+						fprintf(ctx.output, "  store %s %d, %s* %s%s\n", type_str, value,
+							type_str, prefix, sym->llvm_name);
+					}
 				} else {
 					fprintf(ctx.output, "  store %s %%t%d, %s* %s%s\n", type_str, final_value,
 						type_str, prefix, sym->llvm_name);
@@ -1721,8 +1731,13 @@ static void generate_statement(ast_node_t *node)
 
 				if (node->data.declaration.init->type == AST_NUMBER ||
 				    node->data.declaration.init->type == AST_CHARACTER) {
-					fprintf(ctx.output, "  store %s %d, %s* %%%s\n", type_str, init_value, type_str,
-						sym->llvm_name);
+					if (sym->type_info.pointer_level > 0 && init_value == 0) {
+						fprintf(ctx.output, "  store %s null, %s* %%%s\n", type_str, type_str,
+							sym->llvm_name);
+					} else {
+						fprintf(ctx.output, "  store %s %d, %s* %%%s\n", type_str, init_value,
+							type_str, sym->llvm_name);
+					}
 				} else {
 					type_info_t init_type =
 						get_expression_type(node->data.declaration.init, ctx.symbol_table);
@@ -1761,19 +1776,31 @@ static void generate_statement(ast_node_t *node)
 
 			if (sym->is_parameter) {
 				if (node->data.assignment.value->type == AST_NUMBER) {
-					fprintf(ctx.output, "  store %s %d, %s* %%%s.addr\n", type_str, value, type_str,
-						sym->llvm_name);
+					if (sym->type_info.pointer_level > 0 && value == 0) {
+						fprintf(ctx.output, "  store %s null, %s* %%%s.addr\n", type_str,
+							type_str, sym->llvm_name);
+					} else {
+						fprintf(ctx.output, "  store %s %d, %s* %%%s.addr\n", type_str, value,
+							type_str, sym->llvm_name);
+					}
 				} else {
 					fprintf(ctx.output, "  store %s %%t%d, %s* %%%s.addr\n", type_str, final_value,
 						type_str, sym->llvm_name);
 				}
 			} else {
+				const char *prefix = sym->is_global ? "@" : "%";
+
 				if (node->data.assignment.value->type == AST_NUMBER) {
-					fprintf(ctx.output, "  store %s %d, %s* %%%s\n", type_str, value, type_str,
-						sym->llvm_name);
+					if (sym->type_info.pointer_level > 0 && value == 0) {
+						fprintf(ctx.output, "  store %s null, %s* %s%s\n", type_str, type_str,
+							prefix, sym->llvm_name);
+					} else {
+						fprintf(ctx.output, "  store %s %d, %s* %s%s\n", type_str, value,
+							type_str, prefix, sym->llvm_name);
+					}
 				} else {
-					fprintf(ctx.output, "  store %s %%t%d, %s* %%%s\n", type_str, final_value,
-						type_str, sym->llvm_name);
+					fprintf(ctx.output, "  store %s %%t%d, %s* %s%s\n", type_str, final_value,
+						type_str, prefix, sym->llvm_name);
 				}
 			}
 
@@ -1846,8 +1873,15 @@ static void generate_statement(ast_node_t *node)
 					}
 
 					if (node->data.assignment.value->type == AST_NUMBER) {
-						fprintf(ctx.output, "  store %s %d, %s* %%t%d\n", element_type, value,
-							element_type, addr_temp);
+						if (node->data.assignment.lvalue->data.array_access.element_type
+								    .pointer_level > 0 &&
+						    value == 0) {
+							fprintf(ctx.output, "  store %s null, %s* %%t%d\n",
+								element_type, element_type, addr_temp);
+						} else {
+							fprintf(ctx.output, "  store %s %d, %s* %%t%d\n", element_type,
+								value, element_type, addr_temp);
+						}
 					} else {
 						fprintf(ctx.output, "  store %s %%t%d, %s* %%t%d\n", element_type,
 							final_value, element_type, addr_temp);
@@ -1878,8 +1912,15 @@ static void generate_statement(ast_node_t *node)
 				}
 
 				if (node->data.assignment.value->type == AST_NUMBER) {
-					fprintf(ctx.output, "  store %s %d, %s* %s\n", result_type, value, result_type,
-						ptr_str);
+					if (node->data.assignment.lvalue->data.dereference.result_type.pointer_level >
+						    0 &&
+					    value == 0) {
+						fprintf(ctx.output, "  store %s null, %s* %s\n", result_type,
+							result_type, ptr_str);
+					} else {
+						fprintf(ctx.output, "  store %s %d, %s* %s\n", result_type, value,
+							result_type, ptr_str);
+					}
 				} else {
 					fprintf(ctx.output, "  store %s %%t%d, %s* %s\n", result_type, final_value,
 						result_type, ptr_str);
