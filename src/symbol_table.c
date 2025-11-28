@@ -444,6 +444,12 @@ size_t calculate_struct_size(symbol_t *struct_sym)
 		}
 	}
 
+	// If the last member(s) were bit fields, close the final storage unit
+	if (storage_unit_size != 0) {
+		total_size += storage_unit_size;
+		storage_unit_size = 0;
+		current_bit_offset = 0;
+	}
 	// Align final size to struct's alignment
 	total_size = align_to(total_size, max_alignment);
 
