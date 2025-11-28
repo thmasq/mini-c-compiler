@@ -1627,6 +1627,12 @@ static int generate_expression(ast_node_t *node)
 
 			// Determine argument type
 			type_info_t arg_type = get_expression_type(node->data.call.args[i], ctx.symbol_table);
+
+			if (arg_type.is_array) {
+				arg_type.is_array = 0;
+				arg_type.pointer_level++;
+			}
+
 			char *arg_type_str = get_llvm_type_string(&arg_type);
 
 			if (node->data.call.args[i]->type == AST_NUMBER) {
