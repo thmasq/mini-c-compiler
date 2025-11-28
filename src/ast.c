@@ -972,15 +972,185 @@ void free_ast(ast_node_t *node)
 	free(node);
 }
 
-static void traverse_node(ast_node_t *node, symbol_table_t *table);
+static void traverse_node(ast_node_t *node, symbol_table_t *table)
+{
+    if (!node) return;
+
+    switch (node->type) {
+        // --- Top Level & Scoping ---
+	case AST_PROGRAM:
+		traverse_program(node, table);
+		break;
+	case AST_FUNCTION:
+		traverse_function(node, table);
+		break;
+	case AST_COMPOUND_STMT:
+		traverse_compound_statement(node, table);
+		break;
+
+	// --- Declarations (Symbol-creating) ---
+	case AST_DECLARATION:
+		traverse_declaration(node, table);
+		break;
+	case AST_ARRAY_DECL:
+		traverse_array_declaration(node, table);
+		break;
+	case AST_STRUCT_DECL:
+		traverse_struct_decl(node, table);
+		break;
+	case AST_UNION_DECL:
+		traverse_union_decl(node, table);
+		break;
+	case AST_ENUM_DECL:
+		traverse_enum_decl(node, table);
+		break;
+	case AST_TYPEDEF:
+		traverse_typedef(node, table);
+		break;
+
+	// --- Statements (Control Flow) ---
+	case AST_IF_STMT:
+		traverse_node(node->data.if_stmt.condition, table);
+		traverse_node(node->data.if_stmt.then_stmt, table);
+		traverse_node(node->data.if_stmt.else_stmt, table);
+		break;
+	case AST_WHILE_STMT:
+		traverse_node(node->data.while_stmt.condition, table);
+		traverse_node(node->data.while_stmt.body, table);
+		break;
+	case AST_FOR_STMT:
+		enter_scope(table); // for-loops have their own scope for init
+		traverse_node(node->data.for_stmt.init, table);
+		traverse_node(node->data.for_stmt.condition, table);
+		traverse_node(node->data.for_stmt.update, table);
+		traverse_node(node->data.for_stmt.body, table);
+		exit_scope(table);
+		break;
+	case AST_DO_WHILE_STMT:
+		traverse_node(node->data.do_while_stmt.body, table);
+		traverse_node(node->data.do_while_stmt.condition, table);
+		break;
+	case AST_SWITCH_STMT:
+		traverse_node(node->data.switch_stmt.expression, table);
+		traverse_node(node->data.switch_stmt.body, table);
+		break;
+	case AST_CASE_STMT:
+		traverse_node(node->data.case_stmt.value, table);
+		traverse_node(node->data.case_stmt.statement, table);
+		break;
+	case AST_DEFAULT_STMT:
+		traverse_node(node->data.default_stmt.statement, table);
+		break;
+	case AST_RETURN_STMT:
+		traverse_return_stmt(node, table);
+		break;
+	case AST_EXPR_STMT:
+		traverse_node(node->data.expr_stmt.expr, table);
+		break;
+	case AST_LABEL_STMT:
+		traverse_label_stmt(node, table);
+		break;
+	case AST_GOTO_STMT:
+		 // Register the goto as pending
+		 register_goto(table, node->data.goto_stmt.label, node->line_number);
+		 break;
+
+        // --- Expressions (Recursive) ---
+	case AST_ASSIGNMENT:
+		traverse_assignment(node, table);
+		break;
+	case AST_CALL:
+		traverse_call(node, table);
+		break;
+	case AST_BINARY_OP:
+		traverse_binary_op(node, table);
+		break;
+	case AST_UNARY_OP:
+		traverse_unary_op(node, table);
+		break;
+	case AST_CONDITIONAL:
+		traverse_conditional(node, table);
+		break;
+	case AST_CAST:
+		traverse_node(node->data.cast.expression, table);
+		break;
+	case AST_SIZEOF:
+		if (!node->data.sizeof_op.is_type) {
+			traverse_node(node->data.sizeof_op.operand, table);
+		}
+		// Calculate size
+		if (node->data.sizeof_op.is_type) {
+			// Size is based on type - would need type info
+			node->data.sizeof_op.size_value = 4; // placeholder
+		} else {
+			type_info_t expr_type = get_expression_type(node->data.sizeof_op.operand, table);
+			node->data.sizeof_op.size_value = calculate_type_size(&expr_type, table);
+			free_type_info(&expr_type);
+		}
+		break;
+	case AST_ADDRESS_OF:
+		traverse_address_of(node, table);
+		break;
+	case AST_DEREFERENCE:
+		traverse_dereference(node, table);
+		break;
+	case AST_ARRAY_ACCESS:
+		traverse_array_access(node, table);
+		break;
+	case AST_MEMBER_ACCESS:
+		traverse_member_access(node, table);
+		break;
+	case AST_PTR_MEMBER_ACCESS:
+		traverse_ptr_member_access(node, table);
+		break;
+	case AST_INITIALIZER_LIST:
+		for (int i = 0; i < node->data.initializer_list.count; i++) {
+			traverse_node(node->data.initializer_list.values[i], table);
+		}
+		break;
+
+	// --- Terminals (Base Cases) ---
+	case AST_IDENTIFIER:
+		traverse_identifier(node, table);
+		break;
+	case AST_NUMBER:
+	case AST_STRING_LITERAL:
+	case AST_CHARACTER:
+	case AST_PARAMETER: // Already handled in traverse_function
+		// No children to traverse
+		break;
+
+	default:
+		fprintf(stderr, "Warning: Unhandled AST node type in traversal: %d\n", node->type);
+		break;
+	}
+}
 
 static void traverse_program(ast_node_t *node, symbol_table_t *table)
 {
-	if (!node)
-		return;
-	for (int i = 0; i < node->data.program.decl_count; i++) {
-		traverse_node(node->data.program.declarations[i], table);
-	}
+    if (!node)
+        return;
+
+    // PASS 1: Register all function signatures
+    for (int i = 0; i < node->data.program.decl_count; i++) {
+        ast_node_t *decl = node->data.program.declarations[i];
+        if (decl && decl->type == AST_FUNCTION) {
+            // Add function to symbol table, WITHOUT processing body
+            symbol_t *func_sym = add_symbol(table, decl->data.function.name, SYM_FUNCTION,
+                                             decl->data.function.return_type);
+            if (func_sym) {
+                func_sym->is_function_defined = (decl->data.function.body != NULL);
+                func_sym->param_count = decl->data.function.param_count;
+                func_sym->param_symbols = decl->data.function.params;
+                func_sym->is_variadic = decl->data.function.is_variadic;
+            }
+        }
+    }
+
+    // PASS 2: Process all declarations (including function bodies)
+    for (int i = 0; i < node->data.program.decl_count; i++) {
+        traverse_node(node->data.program.declarations[i], table);
+    }
 }
 
 static void traverse_function(ast_node_t *node, symbol_table_t *table)
@@ -1505,160 +1675,6 @@ static void traverse_goto_stmt(ast_node_t *node, symbol_table_t *table)
 		if (label) {
 			label->label_defined = 0;
 		}
-	}
-}
-
-static void traverse_node(ast_node_t *node, symbol_table_t *table)
-{
-    if (!node) return;
-
-    switch (node->type) {
-        // --- Top Level & Scoping ---
-	case AST_PROGRAM:
-		traverse_program(node, table);
-		break;
-	case AST_FUNCTION:
-		traverse_function(node, table);
-		break;
-	case AST_COMPOUND_STMT:
-		traverse_compound_statement(node, table);
-		break;
-
-	// --- Declarations (Symbol-creating) ---
-	case AST_DECLARATION:
-		traverse_declaration(node, table);
-		break;
-	case AST_ARRAY_DECL:
-		traverse_array_declaration(node, table);
-		break;
-	case AST_STRUCT_DECL:
-		traverse_struct_decl(node, table);
-		break;
-	case AST_UNION_DECL:
-		traverse_union_decl(node, table);
-		break;
-	case AST_ENUM_DECL:
-		traverse_enum_decl(node, table);
-		break;
-	case AST_TYPEDEF:
-		traverse_typedef(node, table);
-		break;
-
-	// --- Statements (Control Flow) ---
-	case AST_IF_STMT:
-		traverse_node(node->data.if_stmt.condition, table);
-		traverse_node(node->data.if_stmt.then_stmt, table);
-		traverse_node(node->data.if_stmt.else_stmt, table);
-		break;
-	case AST_WHILE_STMT:
-		traverse_node(node->data.while_stmt.condition, table);
-		traverse_node(node->data.while_stmt.body, table);
-		break;
-	case AST_FOR_STMT:
-		enter_scope(table); // for-loops have their own scope for init
-		traverse_node(node->data.for_stmt.init, table);
-		traverse_node(node->data.for_stmt.condition, table);
-		traverse_node(node->data.for_stmt.update, table);
-		traverse_node(node->data.for_stmt.body, table);
-		exit_scope(table);
-		break;
-	case AST_DO_WHILE_STMT:
-		traverse_node(node->data.do_while_stmt.body, table);
-		traverse_node(node->data.do_while_stmt.condition, table);
-		break;
-	case AST_SWITCH_STMT:
-		traverse_node(node->data.switch_stmt.expression, table);
-		traverse_node(node->data.switch_stmt.body, table);
-		break;
-	case AST_CASE_STMT:
-		traverse_node(node->data.case_stmt.value, table);
-		traverse_node(node->data.case_stmt.statement, table);
-		break;
-	case AST_DEFAULT_STMT:
-		traverse_node(node->data.default_stmt.statement, table);
-		break;
-	case AST_RETURN_STMT:
-		traverse_return_stmt(node, table);
-		break;
-	case AST_EXPR_STMT:
-		traverse_node(node->data.expr_stmt.expr, table);
-		break;
-	case AST_LABEL_STMT:
-		traverse_label_stmt(node, table);
-		break;
-	case AST_GOTO_STMT:
-		 // Register the goto as pending
-		 register_goto(table, node->data.goto_stmt.label, node->line_number);
-		 break;
-
-        // --- Expressions (Recursive) ---
-	case AST_ASSIGNMENT:
-		traverse_assignment(node, table);
-		break;
-	case AST_CALL:
-		traverse_call(node, table);
-		break;
-	case AST_BINARY_OP:
-		traverse_binary_op(node, table);
-		break;
-	case AST_UNARY_OP:
-		traverse_unary_op(node, table);
-		break;
-	case AST_CONDITIONAL:
-		traverse_conditional(node, table);
-		break;
-	case AST_CAST:
-		traverse_node(node->data.cast.expression, table);
-		break;
-	case AST_SIZEOF:
-		if (!node->data.sizeof_op.is_type) {
-			traverse_node(node->data.sizeof_op.operand, table);
-		}
-		// Calculate size
-		if (node->data.sizeof_op.is_type) {
-			// Size is based on type - would need type info
-			node->data.sizeof_op.size_value = 4; // placeholder
-		} else {
-			type_info_t expr_type = get_expression_type(node->data.sizeof_op.operand, table);
-			node->data.sizeof_op.size_value = calculate_type_size(&expr_type, table);
-			free_type_info(&expr_type);
-		}
-		break;
-	case AST_ADDRESS_OF:
-		traverse_address_of(node, table);
-		break;
-	case AST_DEREFERENCE:
-		traverse_dereference(node, table);
-		break;
-	case AST_ARRAY_ACCESS:
-		traverse_array_access(node, table);
-		break;
-	case AST_MEMBER_ACCESS:
-		traverse_member_access(node, table);
-		break;
-	case AST_PTR_MEMBER_ACCESS:
-		traverse_ptr_member_access(node, table);
-		break;
-	case AST_INITIALIZER_LIST:
-		for (int i = 0; i < node->data.initializer_list.count; i++) {
-			traverse_node(node->data.initializer_list.values[i], table);
-		}
-		break;
-
-	// --- Terminals (Base Cases) ---
-	case AST_IDENTIFIER:
-		traverse_identifier(node, table);
-		break;
-	case AST_NUMBER:
-	case AST_STRING_LITERAL:
-	case AST_CHARACTER:
-	case AST_PARAMETER: // Already handled in traverse_function
-		// No children to traverse
-		break;
-
-	default:
-		fprintf(stderr, "Warning: Unhandled AST node type in traversal: %d\n", node->type);
-		break;
 	}
 }
 
