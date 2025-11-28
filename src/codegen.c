@@ -1043,10 +1043,32 @@ static int generate_expression(ast_node_t *node)
 			}
 
 			// Calculate new value
-			const char *op_str =
-				(node->data.unary_op.op == OP_PREINC || node->data.unary_op.op == OP_POSTINC) ? "add"
-													      : "sub";
-			fprintf(ctx.output, "  %%t%d = %s %s %%t%d, 1\n", new_val_temp, op_str, type_str, old_val_temp);
+			if (sym->type_info.pointer_level > 0) {
+				int offset =
+					(node->data.unary_op.op == OP_PREINC || node->data.unary_op.op == OP_POSTINC)
+						? 1
+						: -1;
+
+				// Create type info for the element being pointed to
+				type_info_t elem_info = deep_copy_type_info(&sym->type_info);
+				elem_info.pointer_level--; // Dereference to get base type
+
+				char *elem_type_str = get_llvm_type_string(&elem_info);
+
+				fprintf(ctx.output, "  %%t%d = getelementptr %s, %s* %%t%d, i32 %d\n", new_val_temp,
+					elem_type_str, elem_type_str, old_val_temp, offset);
+
+				free(elem_type_str);
+				free_type_info(&elem_info);
+			} else {
+				// Integer arithmetic using add/sub
+				const char *op_str =
+					(node->data.unary_op.op == OP_PREINC || node->data.unary_op.op == OP_POSTINC)
+						? "add"
+						: "sub";
+				fprintf(ctx.output, "  %%t%d = %s %s %%t%d, 1\n", new_val_temp, op_str, type_str,
+					old_val_temp);
+			}
 
 			// Store new value
 			if (sym->is_parameter) {
@@ -1062,9 +1084,8 @@ static int generate_expression(ast_node_t *node)
 			// Return appropriate value
 			if (node->data.unary_op.op == OP_PREINC || node->data.unary_op.op == OP_PREDEC) {
 				return new_val_temp;
-			} else {
-				return old_val_temp;
 			}
+			return old_val_temp;
 		}
 
 		// Regular unary operators
