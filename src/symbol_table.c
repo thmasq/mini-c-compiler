@@ -425,6 +425,7 @@ size_t calculate_struct_size(symbol_t *struct_sym)
 				total_size += storage_unit_size;
 				// start new block
 				storage_unit_size = member->size;
+				storage_unit_align = member->alignment;
 				total_size = align_to(total_size, storage_unit_align);
 				current_bit_offset = 0;
 			}
