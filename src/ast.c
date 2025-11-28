@@ -1609,7 +1609,7 @@ static void traverse_node(ast_node_t *node, symbol_table_t *table)
 		register_goto(table, node->data.goto_stmt.label, node->line_number);
 		break;
 
-        // --- Expressions (Recursive) ---
+// --- Expressions (Recursive) ---
 	case AST_ASSIGNMENT:
 		traverse_assignment(node, table);
 		break;
