@@ -1605,9 +1605,9 @@ static void traverse_node(ast_node_t *node, symbol_table_t *table)
 		traverse_label_stmt(node, table);
 		break;
 	case AST_GOTO_STMT:
-		 // Register the goto as pending
-		 register_goto(table, node->data.goto_stmt.label, node->line_number);
-		 break;
+		// Register the goto as pending
+		register_goto(table, node->data.goto_stmt.label, node->line_number);
+		break;
 
         // --- Expressions (Recursive) ---
 	case AST_ASSIGNMENT:
