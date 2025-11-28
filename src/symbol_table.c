@@ -1021,14 +1021,29 @@ void print_symbol(symbol_t *sym, int indent)
 int resolve_typedef(type_info_t *t, symbol_table_t *table)
 {
     if (!t || !t->base_type || t->is_struct || t->is_union || t->is_enum) return 0;
-    symbol_t *sym = find_symbol(table, t->base_type);
-    if (!sym || sym->sym_type != SYM_TYPEDEF) return 0;
-    type_info_t resolved = deep_copy_type_info(&sym->type_info);
-    // Preserve pointer levels from usage
-    resolved.pointer_level += t->pointer_level;
-    free(t->base_type);
-    *t = resolved;
-    return 1;
+    int changed = 0;
+    int pointer_level = t->pointer_level;
+    type_info_t tmp = *t;
+    while (1) {
+        symbol_t *sym = find_symbol(table, tmp.base_type);
+        if (!sym || sym->sym_type != SYM_TYPEDEF) break;
+        type_info_t resolved = deep_copy_type_info(&sym->type_info);
+        // Accumulate pointer levels
+        resolved.pointer_level += pointer_level;
+        pointer_level = resolved.pointer_level;
+        free(tmp.base_type);
+        tmp = resolved;
+        changed = 1;
+        // If resolved type is struct/union/enum, stop
+        if (tmp.is_struct || tmp.is_union || tmp.is_enum) break;
+    }
+    if (changed) {
+        // Free original base_type if not already freed
+        if (t->base_type != tmp.base_type)
+            free(t->base_type);
+        *t = tmp;
+    }
+    return changed;
 }
 
 int is_runtime_sized(const type_info_t *t)
