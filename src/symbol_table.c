@@ -1060,7 +1060,7 @@ int is_runtime_sized(const type_info_t *t)
 
     // Arrays: if there is no size expression (array_size == NULL),
     // it is an incomplete array, whose size is not determined at compile time.
-	// Otherwise, considered to have a compile-time known size.
+    // Otherwise, considered to have a compile-time known size.
     return t->is_array && t->array_size == NULL ? 1 : 0;
 }
 
