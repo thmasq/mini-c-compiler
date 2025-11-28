@@ -42,10 +42,10 @@ O Valgrind possui ferramentas que detectam erros decorrentes do uso incorreto da
 #### Metodologia
 
 1. **Bateria de Testes**: É executado o compilador sob Valgrind com:
-   - Suíte de testes léxicos e sintáticos (30+ casos)
-   - Geração de LLVM IR para programas básicos e avançados
-   - Testes de estresse (recursão profunda, *arrays* grandes, múltiplos escopos)
-   - Programas com erros semânticos intencionais
+    - Suíte de testes léxicos e sintáticos (30+ casos)
+    - Geração de LLVM IR para programas básicos e avançados
+    - Testes de estresse (recursão profunda, *arrays* grandes, múltiplos escopos)
+    - Programas com erros semânticos intencionais
 
 2. **Ciclo de Correção**:
    - Análise de relatórios do Valgrind
