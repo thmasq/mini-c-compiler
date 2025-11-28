@@ -2261,6 +2261,15 @@ static void generate_statement(ast_node_t *node)
 		if (node->data.return_stmt.value) {
 			int value = generate_expression(node->data.return_stmt.value);
 
+			if (node->data.return_stmt.value->type != AST_NUMBER) {
+				type_info_t expr_type =
+					get_expression_type(node->data.return_stmt.value, ctx.symbol_table);
+
+				value = cast_value(value, &expr_type, &ctx.current_function_return_type);
+
+				free_type_info(&expr_type);
+			}
+
 			char *return_type = get_llvm_type_string(&ctx.current_function_return_type);
 
 			if (node->data.return_stmt.value->type == AST_NUMBER) {
