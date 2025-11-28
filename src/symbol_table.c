@@ -700,12 +700,6 @@ symbol_t *add_enum_constant(symbol_table_t *table, const char *name, int value)
 // Set current function context
 void set_current_function(symbol_table_t *table, const char *func_name)
 {
-    // Check pending labels from previous function
-    if (table->current_function) {
-        check_pending_labels(table);
-        clear_pending_labels(table);
-    }
-
     free(table->current_function);
     table->current_function = string_duplicate(func_name);
 }
