@@ -641,7 +641,7 @@ type_info_t perform_usual_arithmetic_conversions(type_info_t *type1, type_info_t
 type_info_t perform_integer_promotions(type_info_t *type)
 {
 	if (!is_integer_type(type)) {
-		return *type; // No promotion
+		return deep_copy_type_info(type);
 	}
 
 	// Promote char and short to int
@@ -649,7 +649,7 @@ type_info_t perform_integer_promotions(type_info_t *type)
 		return create_type_info(string_duplicate("int"), 0, 0, NULL);
 	}
 
-	return *type; // No promotion needed
+	return deep_copy_type_info(type);
 }
 
 int can_convert_to(type_info_t *from, type_info_t *to)
@@ -1237,11 +1237,24 @@ static void traverse_call(ast_node_t *node, symbol_table_t *table)
 			node->line_number);
 		error_count++;
 	} else {
-		if (node->data.call.arg_count != func_sym->param_count && !func_sym->is_variadic) {
-			fprintf(stderr, "Semantic Error: Function '%s' expects %d arguments, got %d at line %d\n",
-				node->data.call.name, func_sym->param_count, node->data.call.arg_count,
-				node->line_number);
-			error_count++;
+		// Check argument count for non-variadic functions
+		if (!func_sym->is_variadic) {
+			if (node->data.call.arg_count != func_sym->param_count) {
+				fprintf(stderr,
+					"Semantic Error: Function '%s' expects %d arguments, got %d at line %d\n",
+					node->data.call.name, func_sym->param_count, node->data.call.arg_count,
+					node->line_number);
+				error_count++;
+			}
+		} else {
+			// For variadic functions, check minimum number of arguments
+			if (node->data.call.arg_count < func_sym->param_count) {
+				fprintf(stderr,
+					"Semantic Error: Variadic function '%s' expects at least %d arguments, got %d at line %d\n",
+					node->data.call.name, func_sym->param_count, node->data.call.arg_count,
+					node->line_number);
+				error_count++;
+			}
 		}
 
 		free_type_info(&node->data.call.return_type);
@@ -1476,7 +1489,7 @@ static void traverse_return_stmt(ast_node_t *node, symbol_table_t *table)
 		if (func) {
 			type_info_t return_type = get_expression_type(node->data.return_stmt.value, table);
 
-			if (!is_compatible_type(&func->type_info, &return_type)) {
+			if (!can_convert_to(&return_type, &func->type_info)) {
 				fprintf(stderr, "Semantic Warning: Return type mismatch at line %d\n",
 					node->line_number);
 			}

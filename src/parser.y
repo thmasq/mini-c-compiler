@@ -96,6 +96,7 @@ static void cleanup_type_info(type_info_t *type_info) {
     struct {
         ast_node_t **nodes;
         int count;
+        int is_variadic;
     } node_array;
     struct {
         member_info_t *members;
@@ -115,6 +116,47 @@ static void cleanup_type_info(type_info_t *type_info) {
         int count;
     } declarator_list;
 }
+
+%destructor { 
+    if ($$) free($$); 
+} <string>
+
+%destructor { 
+    cleanup_type_info(&$$); 
+} <type_info>
+
+%destructor {
+    if ($$.name) free($$.name);
+    free_ast($$.array_size);
+    if ($$.params) {
+        for (int i = 0; i < $$.param_count; i++) {
+            free_ast($$.params[i]); // free children
+        }
+        free($$.params);
+    }
+} <declarator>
+
+%destructor {
+    if ($$.declarators) {
+        for (int i = 0; i < $$.count; i++) {
+            if ($$.declarators[i].name) free($$.declarators[i].name);
+            free_ast($$.declarators[i].array_size); // free child
+            if ($$.declarators[i].params) {
+               for (int j = 0; j < $$.declarators[i].param_count; j++) {
+                   free_ast($$.declarators[i].params[j]); // free children
+               }
+               free($$.declarators[i].params);
+            }
+        }
+        free($$.declarators);
+    }
+    if ($$.initializers) {
+        for (int i = 0; i < $$.count; i++) {
+            free_ast($$.initializers[i]); 
+        }
+        free($$.initializers);
+    }
+} <declarator_list>
 
 /* Tokens */
 %token <string> IDENTIFIER TYPE_NAME STRING_LITERAL
@@ -150,7 +192,8 @@ static void cleanup_type_info(type_info_t *type_info) {
 %type <node> exclusive_or_expression inclusive_or_expression logical_and_expression
 %type <node> logical_or_expression conditional_expression assignment_expression
 %type <node> expression constant_expression
-%type <node> parameter_declaration abstract_declarator direct_abstract_declarator
+%type <node> parameter_declaration
+%type <declarator> abstract_declarator direct_abstract_declarator
 %type <node> initializer_list designation designator
 
 %type <type_info> declaration_specifiers type_specifier specifier_qualifier_list
@@ -271,13 +314,17 @@ external_declaration
 function_definition
     : declaration_specifiers declarator declaration_list compound_statement {
         type_info_t func_type = make_complete_type($1, $2);
+        func_type.is_variadic = $2.is_variadic;
         $$ = create_function(string_duplicate($2.name), func_type, NULL, 0, $4);
+        $$->data.function.is_defined = 1;
+        $$->data.function.is_variadic = $2.is_variadic;
         free($2.name);
         cleanup_type_info(&$1);
         // func_type is now owned by the function node
     }
     | declaration_specifiers declarator compound_statement {
         type_info_t func_type = make_complete_type($1, $2);
+        func_type.is_variadic = $2.is_variadic;
         ast_node_t **params = NULL;
         int param_count = 0;
 
@@ -287,6 +334,8 @@ function_definition
         }
 
         $$ = create_function(string_duplicate($2.name), func_type, params, param_count, $3);
+        $$->data.function.is_defined = 1;
+        $$->data.function.is_variadic = $2.is_variadic;
         free($2.name);
         cleanup_type_info(&$1);
         // func_type is now owned by the function node
@@ -395,6 +444,39 @@ struct_or_union_specifier
         $$ = create_type_info(string_duplicate($2), 0, 0, NULL);
         $$.is_struct = (strcmp($1, "struct") == 0);
         $$.is_union = (strcmp($1, "union") == 0);
+
+        if (global_symbol_table) {
+            symbol_type_t sym_type = $$.is_struct ? SYM_STRUCT : SYM_UNION;
+            symbol_t *struct_sym = add_symbol(global_symbol_table, $2, sym_type, $$);
+
+            if (struct_sym) {
+                for (int i = 0; i < $4.count; i++) {
+                    ast_node_t *decl_node = $4.nodes[i];
+                    
+                    if (decl_node->type == AST_DECLARATION) {
+                        char *member_name = decl_node->data.declaration.name;
+                        type_info_t member_type = decl_node->data.declaration.type_info;
+
+                        symbol_t *member = create_symbol(member_name, SYM_VARIABLE, member_type);
+                        
+                        member->size = calculate_type_size(&member_type, global_symbol_table);
+                        member->alignment = calculate_type_alignment(&member_type, global_symbol_table);
+
+                        add_struct_member(struct_sym, member);
+                    }
+                    free_ast(decl_node);
+                }
+                
+                calculate_struct_offsets(struct_sym);
+            } else {
+                for (int i = 0; i < $4.count; i++) free_ast($4.nodes[i]);
+            }
+            free($4.nodes);
+        } else {
+             for (int i = 0; i < $4.count; i++) free_ast($4.nodes[i]);
+             free($4.nodes);
+        }
+
         free($1);
         free($2);
     }
@@ -437,8 +519,30 @@ struct_declaration
         $$.nodes = malloc($$.count * sizeof(ast_node_t*));
         for (int i = 0; i < $$.count; i++) {
             member_info_t *member = &$2.members[i];
-            type_info_t member_type = make_complete_type($1, make_declarator(member->name, 0, 0, NULL));
+            
+            declarator_t member_decl;
+            member_decl.name = member->name;
+            member_decl.pointer_level = member->type.pointer_level;
+            
+            if (member->type.array_size != NULL) {
+                member_decl.is_array = 1;
+                member_decl.array_size = member->type.array_size;
+            } else {
+                member_decl.is_array = member->type.is_array;
+                member_decl.array_size = NULL;
+            }
+            
+            member_decl.is_function = member->type.is_function;
+            member_decl.params = member->type.param_types;
+            member_decl.param_count = member->type.param_count;
+            member_decl.is_variadic = member->type.is_variadic;
+
+            type_info_t member_type = make_complete_type($1, member_decl);
+            
             $$.nodes[i] = create_declaration(member_type, string_duplicate(member->name), NULL);
+            
+            if (member->type.base_type) free(member->type.base_type);
+            if (member->name) free(member->name);
         }
         free($2.members);
         cleanup_type_info(&$1);
@@ -502,10 +606,54 @@ enum_specifier
     : ENUM LBRACE enumerator_list RBRACE {
         $$ = create_type_info(string_duplicate("enum"), 0, 0, NULL);
         $$.is_enum = 1;
+
+        if (global_symbol_table) {
+            int current_enum_val = 0;
+            for (int i = 0; i < $3.count; i++) {
+                enum_value_t *ev = $3.values[i];
+                
+                if (ev->value_expr) {
+                    current_enum_val = ev->value;
+                } else {
+                    ev->value = current_enum_val;
+                }
+
+                add_enum_constant(global_symbol_table, ev->name, current_enum_val);
+                
+                current_enum_val++;
+
+                if (ev->name) free(ev->name);
+                if (ev->value_expr) free_ast(ev->value_expr);
+                free(ev);
+            }
+            // Free the list array itself
+            free($3.values);
+        }
     }
     | ENUM IDENTIFIER LBRACE enumerator_list RBRACE {
         $$ = create_type_info(string_duplicate($2), 0, 0, NULL);
         $$.is_enum = 1;
+
+        if (global_symbol_table) {
+            int current_enum_val = 0;
+            for (int i = 0; i < $4.count; i++) {
+                enum_value_t *ev = $4.values[i];
+                
+                if (ev->value_expr) {
+                    current_enum_val = ev->value;
+                } else {
+                    ev->value = current_enum_val;
+                }
+
+                add_enum_constant(global_symbol_table, ev->name, current_enum_val);
+                current_enum_val++;
+
+                if (ev->name) free(ev->name);
+                if (ev->value_expr) free_ast(ev->value_expr);
+                free(ev);
+            }
+            free($4.values);
+        }
         free($2);
     }
     | ENUM LBRACE enumerator_list COMMA RBRACE {
@@ -631,12 +779,14 @@ direct_declarator
         $$.is_function = 1;
         $$.params = $3.nodes;
         $$.param_count = $3.count;
+        $$.is_variadic = $3.is_variadic;
     }
     | direct_declarator LPAREN RPAREN {
         $$ = $1;
         $$.is_function = 1;
         $$.params = NULL;
         $$.param_count = 0;
+        $$.is_variadic = 0;
     }
     ;
 
@@ -663,10 +813,13 @@ type_qualifier_list
     ;
 
 parameter_type_list
-    : parameter_list { $$ = $1; }
+    : parameter_list { 
+        $$ = $1;
+        $$.is_variadic = 0;  // Not variadic
+    }
     | parameter_list COMMA ELLIPSIS {
         $$ = $1;
-        // Mark as variadic - would need to track this in declarator
+        $$.is_variadic = 1;  // Mark as variadic
     }
     ;
 
@@ -690,8 +843,13 @@ parameter_declaration
         free($2.name);
         cleanup_type_info(&$1);
     }
-    | declaration_specifiers abstract_declarator {
-        type_info_t param_type = deep_copy_type_info(&$1);
+| declaration_specifiers abstract_declarator {
+        type_info_t param_type = make_complete_type($1, $2);
+        
+        if ($2.is_function) {
+            param_type.param_types = $2.params;
+        }
+
         $$ = create_parameter(param_type, string_duplicate(""));
         cleanup_type_info(&$1);
     }
@@ -705,29 +863,78 @@ parameter_declaration
 type_name
     : specifier_qualifier_list { $$ = $1; }
     | specifier_qualifier_list abstract_declarator { 
-        $$ = $1; 
-        // Apply abstract declarator modifications here if needed
+        $$ = make_complete_type($1, $2);
+        cleanup_type_info(&$1);
     }
     ;
 
 abstract_declarator
-    : pointer { $$ = NULL; }
+    : pointer {
+        $$ = $1;
+    }
     | direct_abstract_declarator { $$ = $1; }
-    | pointer direct_abstract_declarator { $$ = $2; }
+    | pointer direct_abstract_declarator {
+        $$ = $2;  /* $2 is the base abstract declarator */
+        $$.pointer_level += $1.pointer_level;
+    }
     ;
 
 direct_abstract_declarator
     : LPAREN abstract_declarator RPAREN { $$ = $2; }
-    | LBRACKET RBRACKET { $$ = NULL; }
-    | LBRACKET assignment_expression RBRACKET { $$ = NULL; }
-    | direct_abstract_declarator LBRACKET RBRACKET { $$ = $1; }
-    | direct_abstract_declarator LBRACKET assignment_expression RBRACKET { $$ = $1; }
-    | LBRACKET ASTERISK RBRACKET { $$ = NULL; }
-    | direct_abstract_declarator LBRACKET ASTERISK RBRACKET { $$ = $1; }
-    | LPAREN RPAREN { $$ = NULL; }
-    | LPAREN parameter_type_list RPAREN { $$ = NULL; }
-    | direct_abstract_declarator LPAREN RPAREN { $$ = $1; }
-    | direct_abstract_declarator LPAREN parameter_type_list RPAREN { $$ = $1; }
+    | LBRACKET RBRACKET {
+        $$ = make_declarator(NULL, 0, 1, NULL);
+        $$.is_array = 1;
+    }
+    | LBRACKET assignment_expression RBRACKET {
+        $$ = make_declarator(NULL, 0, 1, $2);
+        $$.is_array = 1;
+    }
+    | direct_abstract_declarator LBRACKET RBRACKET {
+        $$ = $1;
+        $$.is_array = 1;
+        free_ast($1.array_size);
+        $$.array_size = NULL;
+    }
+    | direct_abstract_declarator LBRACKET assignment_expression RBRACKET {
+        $$ = $1;
+        $$.is_array = 1;
+        free_ast($1.array_size);
+        $$.array_size = $3;
+    }
+    | LBRACKET ASTERISK RBRACKET {
+        $$ = make_declarator(NULL, 0, 1, NULL);
+        $$.is_array = 1;
+    }
+    | direct_abstract_declarator LBRACKET ASTERISK RBRACKET {
+        $$ = $1;
+        $$.is_array = 1;
+        free_ast($1.array_size);
+        $$.array_size = NULL;
+    }
+    | LPAREN RPAREN {
+        $$ = make_declarator(NULL, 0, 0, NULL);
+        $$.is_function = 1;
+        $$.params = NULL;
+        $$.param_count = 0;
+    }
+    | LPAREN parameter_type_list RPAREN {
+        $$ = make_declarator(NULL, 0, 0, NULL);
+        $$.is_function = 1;
+        $$.params = $2.nodes;
+        $$.param_count = $2.count;
+    }
+    | direct_abstract_declarator LPAREN RPAREN {
+        $$ = $1;
+        $$.is_function = 1;
+        $$.params = NULL;
+        $$.param_count = 0;
+    }
+    | direct_abstract_declarator LPAREN parameter_type_list RPAREN {
+        $$ = $1;
+        $$.is_function = 1;
+        $$.params = $3.nodes;
+        $$.param_count = $3.count;
+    }
     ;
 
 /* Statements */
@@ -907,14 +1114,18 @@ postfix_expression
     }
     | postfix_expression LPAREN RPAREN {
         if ($1->type == AST_IDENTIFIER) {
-            $$ = create_call($1->data.identifier.name, NULL, 0);
+            char *func_name = string_duplicate($1->data.identifier.name);
+            $$ = create_call(func_name, NULL, 0);
+            free_ast($1);
         } else {
             $$ = create_error_expression();
         }
     }
     | postfix_expression LPAREN argument_expression_list RPAREN {
         if ($1->type == AST_IDENTIFIER) {
-            $$ = create_call($1->data.identifier.name, $3.nodes, $3.count);
+            char *func_name = string_duplicate($1->data.identifier.name);
+            $$ = create_call(func_name, $3.nodes, $3.count);
+            free_ast($1);
         } else {
             $$ = create_error_expression();
         }
@@ -1108,7 +1319,9 @@ assignment_expression
     | unary_expression assignment_operator assignment_expression {
         if ($2 == OP_ASSIGN) {
             if ($1->type == AST_IDENTIFIER) {
-                $$ = create_assignment($1->data.identifier.name, $3);
+                char *var_name = string_duplicate($1->data.identifier.name);
+                $$ = create_assignment(var_name, $3);
+                free_ast($1);
             } else {
                 $$ = create_assignment_to_lvalue($1, $3);
             }
@@ -1198,8 +1411,32 @@ designator
 /* Top-level declaration handling */
 declaration
     : declaration_specifiers init_declarator_list SEMICOLON {
+        // Check if this is a function declaration
+        if ($2.count == 1 && $2.declarators[0].is_function) {
+            type_info_t complete_type = make_complete_type($1, $2.declarators[0]);
+            complete_type.is_variadic = $2.declarators[0].is_variadic;
+            
+            // Create function node without body (prototype/declaration)
+            ast_node_t **params = $2.declarators[0].params;
+            int param_count = $2.declarators[0].param_count;
+            
+            $$ = create_function(string_duplicate($2.declarators[0].name), 
+                               complete_type, params, param_count, NULL);
+            $$->data.function.is_defined = 0;
+            $$->data.function.is_variadic = $2.declarators[0].is_variadic;
+            
+            // Set extern flag if present
+            if ($1.storage_class == STORAGE_EXTERN) {
+                $$->data.function.storage_class = STORAGE_EXTERN;
+            }
+            
+            free($2.declarators[0].name);
+            free($2.declarators);
+            free($2.initializers);
+            cleanup_type_info(&$1);
+        }
         // Create a declaration for each declarator with proper type
-        if ($2.count == 1) {
+        else if ($2.count == 1) {
             // Single declarator - return it directly
             type_info_t complete_type = make_complete_type($1, $2.declarators[0]);
             $$ = create_declaration(complete_type, 
