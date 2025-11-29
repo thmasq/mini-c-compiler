@@ -1021,7 +1021,7 @@ static void traverse_function(ast_node_t *node, symbol_table_t *table)
         error_count++;
     }
 
-    // Process parameters: ADD THEM TO THE SYMBOL TABLE
+    // Process parameters: ADD them to the symbol table
     for (int i = 0; i < node->data.function.param_count; i++) {
         ast_node_t *param = node->data.function.params[i];
         if (param && param->type == AST_PARAMETER) {
@@ -1219,7 +1219,7 @@ static void traverse_assignment(ast_node_t *node, symbol_table_t *table) {
 		error_count++;  
 		return;  
 	}
-	
+
     // Traverse both sides first
     traverse_node(node->data.assignment.lvalue, table);
     traverse_node(node->data.assignment.value, table);
