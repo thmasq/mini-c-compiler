@@ -1208,41 +1208,81 @@ static void traverse_identifier(ast_node_t *node, symbol_table_t *table)
 }
 
 static void traverse_assignment(ast_node_t *node, symbol_table_t *table) {  
-    // Check for NULL lvalue before dereferencing  
-    if (node->data.assignment.lvalue == NULL) {  
-        fprintf(stderr, "Semantic Error: Assignment missing lvalue at line %d\n", node->line_number);  
-        error_count++;  
-        return;  
-    }
-    if (node->data.assignment.value == NULL) {  
-		fprintf(stderr, "Semantic Error: Assignment missing value at line %d\n", node->line_number);  
-		error_count++;  
-		return;  
-	}
+    if (!node) return;
 
-    // Traverse both sides first
-    traverse_node(node->data.assignment.lvalue, table);
+    // Keep checking value (rvalue)
+    if (node->data.assignment.value == NULL) {
+        fprintf(stderr, "Semantic Error: Assignment missing rvalue at line %d\n",
+                node->line_number);
+        error_count++;
+        return;
+    }
+
+    // First, process the value's subtree
     traverse_node(node->data.assignment.value, table);
 
-    // Validate const correctness
-    if (!can_modify_lvalue(node->data.assignment.lvalue, table)) {
-        fprintf(stderr, "Semantic Error: Attempt to modify const object at line %d\n", 
+    type_info_t lvalue_type = create_type_info(string_duplicate("int"), 0, 0, NULL);
+    int lvalue_resolved = 0;
+
+    if (node->data.assignment.lvalue != NULL) {
+        // Default case: lvalue is a node (e.g., *p, a[i], id)
+        traverse_node(node->data.assignment.lvalue, table);
+
+        // Check modifiability (const correctness)
+        if (!can_modify_lvalue(node->data.assignment.lvalue, table)) {
+            fprintf(stderr, "Semantic Error: Cannot modify const lvalue at line %d\n",
+                    node->line_number);
+            error_count++;
+        }
+
+        // Get lvalue's type
+        free_type_info(&lvalue_type);
+        lvalue_type = get_expression_type(node->data.assignment.lvalue, table);
+        lvalue_resolved = 1;
+    } else if (node->data.assignment.name != NULL) {
+        // Assignment by name (e.g., x = 1) — treat as valid lvalue
+        symbol_t *sym = find_symbol(table, node->data.assignment.name);
+        if (!sym) {
+            fprintf(stderr, "Semantic Error: Use of undeclared identifier '%s' at line %d\n",
+                    node->data.assignment.name, node->line_number);
+            error_count++;
+        } else if (sym->sym_type != SYM_VARIABLE) {
+            fprintf(stderr, "Semantic Error: '%s' is not a modifiable lvalue at line %d\n",
+                    node->data.assignment.name, node->line_number);
+            error_count++;
+        } else {
+            // Const correctness: if const, cannot modify
+            if (sym->type_info.qualifiers & QUAL_CONST) {
+                fprintf(stderr, "Semantic Error: Cannot assign to const variable '%s' at line %d\n",
+                        node->data.assignment.name, node->line_number);
+                error_count++;
+            }
+            // Lvalue's type comes from the symbol
+            free_type_info(&lvalue_type);
+            lvalue_type = deep_copy_type_info(&sym->type_info);
+            lvalue_resolved = 1;
+        }
+    } else {
+        // Neither lvalue nor name: error
+        fprintf(stderr, "Semantic Error: Assignment missing lvalue at line %d\n",
                 node->line_number);
         error_count++;
     }
 
-    // Get types for validation
-    type_info_t lvalue_type = get_expression_type(node->data.assignment.lvalue, table);
+    // Get rvalue's type
     type_info_t rvalue_type = get_expression_type(node->data.assignment.value, table);
 
-    // Check type compatibility
-    if (is_integer_type(&lvalue_type) && rvalue_type.pointer_level > 0) {
-        fprintf(stderr, "Semantic Error: Assigning a pointer to an integer at line %d\n", 
-                node->line_number);
-        error_count++;
+    // Simple compatibility rules (e.g., prevent assigning pointer to integer without cast)
+    if (lvalue_resolved) {
+        if (is_integer_type(&lvalue_type) && rvalue_type.pointer_level > 0) {
+            fprintf(stderr, "Semantic Error: Incompatible assignment: pointer to integer at line %d\n",
+                    node->line_number);
+            error_count++;
+        }
+        // Could add additional rules as needed...
     }
 
-    // Clean up
+    // Cleanup
     free_type_info(&lvalue_type);
     free_type_info(&rvalue_type);
 }
