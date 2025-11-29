@@ -466,9 +466,12 @@ static int generate_expression(ast_node_t *node)
 					element_type[strlen(element_type) - 1] = '\0'; // Remove one *
 				}
 				size_t array_length = get_array_length(sym, ctx.symbol_table);
+				const char *prefix = sym->is_global ? "@" : "%";
+
 				fprintf(ctx.output,
-					"  %%t%d = getelementptr [%zu x %s], [%zu x %s]* %%%s, i32 0, i32 0\n", temp,
-					array_length, element_type, array_length, element_type, sym->llvm_name);
+					"  %%t%d = getelementptr [%zu x %s], [%zu x %s]* %s%s, i32 0, i32 0\n", temp,
+					array_length, element_type, array_length, element_type, prefix, sym->llvm_name);
+
 				free(element_type);
 			}
 		} else {
