@@ -1566,6 +1566,8 @@ static void traverse_label_stmt(ast_node_t *node, symbol_table_t *table)
 	traverse_node(node->data.label_stmt.statement, table);
 }
 
+// A currently unused function, for traversing goto statements
+/*
 static void traverse_goto_stmt(ast_node_t *node, symbol_table_t *table)
 {
 	if (!node)
@@ -1579,6 +1581,7 @@ static void traverse_goto_stmt(ast_node_t *node, symbol_table_t *table)
 		}
 	}
 }
+*/
 
 static void traverse_node(ast_node_t *node, symbol_table_t *table)
 {
