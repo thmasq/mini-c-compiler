@@ -427,7 +427,7 @@ size_t calculate_struct_size(symbol_t *struct_sym)
 				current_bit_offset = 0;
 			}
 			member->offset = total_size; // all bit fields share base offset
-			member->enum_value = current_bit_offset; // reuse field to store bit position or create new field
+			member->bit_position = current_bit_offset; // store bit position in dedicated field
 			current_bit_offset += member->bit_field_size;
 			// do not increment total_size yet (only after block closes)
 		} else {
