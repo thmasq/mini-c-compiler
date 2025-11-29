@@ -67,24 +67,34 @@ static inline void free_type_string(type_string_t *ts)
 // Helper functions
 static size_t get_basic_type_size(const char *type_name)
 {
-	if (!type_name)
+	if (!type_name) {
 		return 4;
-	if (strcmp(type_name, "char") == 0)
+	}
+	if (strstr(type_name, "long")) {
+		return 8;
+	}
+
+	if (strcmp(type_name, "char") == 0) {
 		return 1;
-	if (strcmp(type_name, "short") == 0)
+	}
+	if (strcmp(type_name, "short") == 0) {
 		return 2;
-	if (strcmp(type_name, "int") == 0)
+	}
+	if (strcmp(type_name, "int") == 0) {
 		return 4;
-	if (strcmp(type_name, "long") == 0)
-		return 8;
-	if (strcmp(type_name, "float") == 0)
+	}
+	if (strcmp(type_name, "float") == 0) {
 		return 4;
-	if (strcmp(type_name, "double") == 0)
+	}
+	if (strcmp(type_name, "double") == 0) {
 		return 8;
-	if (strcmp(type_name, "_Bool") == 0)
+	}
+	if (strcmp(type_name, "_Bool") == 0) {
 		return 1;
-	if (strstr(type_name, "int"))
+	}
+	if (strstr(type_name, "int")) {
 		return 4;
+	}
 	return 4;
 }
 
@@ -144,7 +154,7 @@ static char *get_llvm_type_string(type_info_t *type_info)
 			strcpy(result, "i16");
 		} else if (strcmp(type_info->base_type, "int") == 0) {
 			strcpy(result, "i32");
-		} else if (strcmp(type_info->base_type, "long") == 0) {
+		} else if (strstr(type_info->base_type, "long")) {
 			strcpy(result, "i64");
 		} else if (strcmp(type_info->base_type, "float") == 0) {
 			strcpy(result, "float");
@@ -174,7 +184,7 @@ static char *get_llvm_type_string(type_info_t *type_info)
 		strcpy(result, "i16");
 	} else if (strcmp(type_info->base_type, "int") == 0) {
 		strcpy(result, "i32");
-	} else if (strcmp(type_info->base_type, "long") == 0) {
+	} else if (strstr(type_info->base_type, "long")) {
 		strcpy(result, "i64");
 	} else if (strcmp(type_info->base_type, "float") == 0) {
 		strcpy(result, "float");

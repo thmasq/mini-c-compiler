@@ -362,6 +362,22 @@ declaration_specifiers
     }
     | type_specifier declaration_specifiers {
         $$ = $1;
+        
+        // Handle "unsigned long"
+        if (strcmp($1.base_type, "unsigned int") == 0 && strcmp($2.base_type, "long") == 0) {
+            free($$.base_type);
+            $$.base_type = string_duplicate("unsigned long");
+        }
+        // Handle "long long"
+        else if (strcmp($1.base_type, "long") == 0 && strcmp($2.base_type, "long") == 0) {
+            free($$.base_type);
+            $$.base_type = string_duplicate("long long");
+        }
+        // Handle "long int"
+        else if (strcmp($1.base_type, "long") == 0 && strcmp($2.base_type, "int") == 0) {
+            // Keep "long" ($1), do nothing else
+        }
+
         if ($2.storage_class != STORAGE_NONE) $$.storage_class = $2.storage_class;
         $$.qualifiers |= $2.qualifiers;
         cleanup_type_info(&$2);
