@@ -1186,9 +1186,28 @@ static int generate_expression(ast_node_t *node)
 		char *end_label = generate_label("cond_end");
 		int result_temp = get_next_temp();
 
-		// Get result type from true expression
-		char *result_type = get_llvm_type_string(&node->data.conditional.result_type);
-		fprintf(ctx.output, "  %%t%d.addr = alloca %s\n", result_temp, result_type);
+		type_info_t true_type = get_expression_type(node->data.conditional.true_expr, ctx.symbol_table);
+		type_info_t false_type = get_expression_type(node->data.conditional.false_expr, ctx.symbol_table);
+
+		if (node->data.conditional.result_type.pointer_level == 0 &&
+		    !node->data.conditional.result_type.is_array &&
+		    ((true_type.pointer_level > 0 || true_type.is_array) &&
+		     (false_type.pointer_level > 0 || false_type.is_array))) {
+
+			if (node->data.conditional.result_type.base_type) {
+				free(node->data.conditional.result_type.base_type);
+			}
+
+			node->data.conditional.result_type = deep_copy_type_info(&true_type);
+
+			if (node->data.conditional.result_type.is_array) {
+				node->data.conditional.result_type.is_array = 0;
+				node->data.conditional.result_type.pointer_level++;
+			}
+		}
+
+		char *result_type_str = get_llvm_type_string(&node->data.conditional.result_type);
+		fprintf(ctx.output, "  %%t%d.addr = alloca %s\n", result_temp, result_type_str);
 
 		// Evaluate condition
 		int cond = generate_expression(node->data.conditional.condition);
@@ -1200,34 +1219,54 @@ static int generate_expression(ast_node_t *node)
 		// True branch
 		fprintf(ctx.output, "%s:\n", true_label);
 		int true_val = generate_expression(node->data.conditional.true_expr);
-		if (node->data.conditional.true_expr->type == AST_NUMBER) {
-			fprintf(ctx.output, "  store %s %d, %s* %%t%d.addr\n", result_type, true_val, result_type,
-				result_temp);
+
+		// Handle constants or cast expression to match result type
+		if (node->data.conditional.true_expr->type == AST_NUMBER ||
+		    node->data.conditional.true_expr->type == AST_CHARACTER) {
+			if (node->data.conditional.result_type.pointer_level > 0 && true_val == 0) {
+				fprintf(ctx.output, "  store %s null, %s* %%t%d.addr\n", result_type_str,
+					result_type_str, result_temp);
+			} else {
+				fprintf(ctx.output, "  store %s %d, %s* %%t%d.addr\n", result_type_str, true_val,
+					result_type_str, result_temp);
+			}
 		} else {
-			fprintf(ctx.output, "  store %s %%t%d, %s* %%t%d.addr\n", result_type, true_val, result_type,
-				result_temp);
+			int casted_val = cast_value(true_val, &true_type, &node->data.conditional.result_type);
+			fprintf(ctx.output, "  store %s %%t%d, %s* %%t%d.addr\n", result_type_str, casted_val,
+				result_type_str, result_temp);
 		}
 		fprintf(ctx.output, "  br label %%%s\n", end_label);
 
 		// False branch
 		fprintf(ctx.output, "%s:\n", false_label);
 		int false_val = generate_expression(node->data.conditional.false_expr);
-		if (node->data.conditional.false_expr->type == AST_NUMBER) {
-			fprintf(ctx.output, "  store %s %d, %s* %%t%d.addr\n", result_type, false_val, result_type,
-				result_temp);
+
+		// Handle constants or cast expression to match result type
+		if (node->data.conditional.false_expr->type == AST_NUMBER ||
+		    node->data.conditional.false_expr->type == AST_CHARACTER) {
+			if (node->data.conditional.result_type.pointer_level > 0 && false_val == 0) {
+				fprintf(ctx.output, "  store %s null, %s* %%t%d.addr\n", result_type_str,
+					result_type_str, result_temp);
+			} else {
+				fprintf(ctx.output, "  store %s %d, %s* %%t%d.addr\n", result_type_str, false_val,
+					result_type_str, result_temp);
+			}
 		} else {
-			fprintf(ctx.output, "  store %s %%t%d, %s* %%t%d.addr\n", result_type, false_val, result_type,
-				result_temp);
+			int casted_val = cast_value(false_val, &false_type, &node->data.conditional.result_type);
+			fprintf(ctx.output, "  store %s %%t%d, %s* %%t%d.addr\n", result_type_str, casted_val,
+				result_type_str, result_temp);
 		}
 		fprintf(ctx.output, "  br label %%%s\n", end_label);
 
 		// End - load result
 		fprintf(ctx.output, "%s:\n", end_label);
 		int final_temp = get_next_temp();
-		fprintf(ctx.output, "  %%t%d = load %s, %s* %%t%d.addr\n", final_temp, result_type, result_type,
+		fprintf(ctx.output, "  %%t%d = load %s, %s* %%t%d.addr\n", final_temp, result_type_str, result_type_str,
 			result_temp);
 
-		free(result_type);
+		free_type_info(&true_type);
+		free_type_info(&false_type);
+		free(result_type_str);
 		free(true_label);
 		free(false_label);
 		free(end_label);
