@@ -1022,28 +1022,38 @@ void print_symbol(symbol_t *sym, int indent)
 int resolve_typedef(type_info_t *t, symbol_table_t *table)
 {
     if (!t || !t->base_type || t->is_struct || t->is_union || t->is_enum) return 0;
+
     int changed = 0;
-    int pointer_level = t->pointer_level;
-    type_info_t tmp = *t;
+
+    // Work on a deep copy to not share pointers with 't'
+    type_info_t out = deep_copy_type_info(t);
+
     while (1) {
-        symbol_t *sym = find_symbol(table, tmp.base_type);
+        symbol_t *sym = find_symbol(table, out.base_type);
         if (!sym || sym->sym_type != SYM_TYPEDEF) break;
-        type_info_t resolved = deep_copy_type_info(&sym->type_info);
+
+        type_info_t next = deep_copy_type_info(&sym->type_info);
         // Accumulate pointer levels
-        resolved.pointer_level += pointer_level;
-        pointer_level = resolved.pointer_level;
-        free(tmp.base_type);
-        tmp = resolved;
+        next.pointer_level += out.pointer_level;
+
+        // Free previous stage before replacing
+        free_type_info(&out);
+        out = next;
         changed = 1;
-        // If resolved type is struct/union/enum, stop
-        if (tmp.is_struct || tmp.is_union || tmp.is_enum) break;
+
+        // If (the) resolved type is (a) struct/union/enum, stop
+        if (out.is_struct || out.is_union || out.is_enum) break;
     }
+
     if (changed) {
-        // Free original base_type if not already freed
-        if (t->base_type != tmp.base_type)
-            free(t->base_type);
-        *t = tmp;
+        // Free all dynamic fields of the original 't' before overwriting
+        free_type_info(t);
+        *t = out;
+    } else {
+        // No changes: discard the temporary copy
+        free_type_info(&out);
     }
+
     return changed;
 }
 
