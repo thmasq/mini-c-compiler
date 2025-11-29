@@ -1192,21 +1192,8 @@ static int generate_expression(ast_node_t *node)
 
 		// Evaluate condition
 		int cond = generate_expression(node->data.conditional.condition);
-		int bool_temp;
 
-		if (node->data.conditional.condition->type == AST_BINARY_OP &&
-		    is_comparison_op(node->data.conditional.condition->data.binary_op.op)) {
-			bool_temp = cond;
-		} else {
-			bool_temp = get_next_temp();
-			char cond_str[32];
-			if (node->data.conditional.condition->type == AST_NUMBER) {
-				snprintf(cond_str, sizeof(cond_str), "%d", cond);
-			} else {
-				snprintf(cond_str, sizeof(cond_str), "%%t%d", cond);
-			}
-			fprintf(ctx.output, "  %%t%d = icmp ne i32 %s, 0\n", bool_temp, cond_str);
-		}
+		int bool_temp = convert_to_boolean(node->data.conditional.condition, cond);
 
 		fprintf(ctx.output, "  br i1 %%t%d, label %%%s, label %%%s\n", bool_temp, true_label, false_label);
 
