@@ -1677,26 +1677,73 @@ static int generate_expression(ast_node_t *node)
 	}
 
 	case AST_CALL: {
-		// Generate arguments
-		int *arg_temps = NULL;
+		symbol_t *func_sym = find_symbol(ctx.symbol_table, node->data.call.name);
+
+		int *arg_values = NULL;      // Holds temp IDs or constant values
+		char **arg_type_strs = NULL; // Holds type strings (e.g., "i32", "i64")
+		int *is_constant = NULL;     // Flags for constants
+
 		if (node->data.call.arg_count > 0) {
-			arg_temps = malloc(sizeof(int) * node->data.call.arg_count);
+			arg_values = malloc(sizeof(int) * node->data.call.arg_count);
+			arg_type_strs = malloc(sizeof(char *) * node->data.call.arg_count);
+			is_constant = malloc(sizeof(int) * node->data.call.arg_count);
+
 			for (int i = 0; i < node->data.call.arg_count; i++) {
-				arg_temps[i] = generate_expression(node->data.call.args[i]);
+				// Generate expression code
+				arg_values[i] = generate_expression(node->data.call.args[i]);
+
+				// Determine initial type
+				type_info_t arg_type = get_expression_type(node->data.call.args[i], ctx.symbol_table);
+				if (arg_type.is_array) {
+					arg_type.is_array = 0;
+					arg_type.pointer_level++;
+				}
+				arg_type_strs[i] = get_llvm_type_string(&arg_type);
+				free_type_info(&arg_type);
+
+				// Determine if constant
+				is_constant[i] = (node->data.call.args[i]->type == AST_NUMBER ||
+						  node->data.call.args[i]->type == AST_CHARACTER);
 			}
 		}
 
-		char *return_type = get_llvm_type_string(&node->data.call.return_type);
+		// 2. Perform Type Checking and emit ZEXT if needed (BEFORE printing call)
+		if (func_sym && func_sym->param_symbols) {
+			for (int i = 0; i < node->data.call.arg_count && i < func_sym->param_count; i++) {
+				type_info_t *expected = &func_sym->param_symbols[i]->data.parameter.type_info;
+				char *expected_str = get_llvm_type_string(expected);
 
-		// Check if function returns void
+				// Check for i32 -> i64 mismatch
+				if (strcmp(arg_type_strs[i], "i32") == 0 && strcmp(expected_str, "i64") == 0) {
+					if (is_constant[i]) {
+						// For constants, just change the type label (e.g. "i32 12" -> "i64 12")
+						free(arg_type_strs[i]);
+						arg_type_strs[i] = strdup("i64");
+					} else {
+						// For variables, emit ZEXT instruction
+						int zext_temp = get_next_temp();
+						fprintf(ctx.output, "  %%t%d = zext i32 %%t%d to i64\n", zext_temp,
+							arg_values[i]);
+
+						// Update to use the new temporary
+						arg_values[i] = zext_temp;
+						free(arg_type_strs[i]);
+						arg_type_strs[i] = strdup("i64");
+						is_constant[i] = 0; // It's now a temp register
+					}
+				}
+				free(expected_str);
+			}
+		}
+
+		// 3. Generate the CALL instruction
+		char *return_type = get_llvm_type_string(&node->data.call.return_type);
 		int returns_void = (strcmp(return_type, "void") == 0);
 		int temp = -1;
 
 		if (returns_void) {
-			// For void functions, don't assign to a temporary
 			fprintf(ctx.output, "  call %s @%s(", return_type, node->data.call.name);
 		} else {
-			// For non-void functions, assign to a temporary
 			temp = get_next_temp();
 			fprintf(ctx.output, "  %%t%d = call %s @%s(", temp, return_type, node->data.call.name);
 		}
@@ -1705,30 +1752,22 @@ static int generate_expression(ast_node_t *node)
 			if (i > 0)
 				fprintf(ctx.output, ", ");
 
-			// Determine argument type
-			type_info_t arg_type = get_expression_type(node->data.call.args[i], ctx.symbol_table);
-
-			if (arg_type.is_array) {
-				arg_type.is_array = 0;
-				arg_type.pointer_level++;
-			}
-
-			char *arg_type_str = get_llvm_type_string(&arg_type);
-
-			if (node->data.call.args[i]->type == AST_NUMBER ||
-			    node->data.call.args[i]->type == AST_CHARACTER) {
-				fprintf(ctx.output, "%s %d", arg_type_str, arg_temps[i]);
+			if (is_constant[i]) {
+				fprintf(ctx.output, "%s %d", arg_type_strs[i], arg_values[i]);
 			} else {
-				fprintf(ctx.output, "%s %%t%d", arg_type_str, arg_temps[i]);
+				fprintf(ctx.output, "%s %%t%d", arg_type_strs[i], arg_values[i]);
 			}
-
-			free(arg_type_str);
-			free_type_info(&arg_type);
 		}
-
 		fprintf(ctx.output, ")\n");
 
-		free(arg_temps);
+		// Cleanup
+		if (node->data.call.arg_count > 0) {
+			for (int i = 0; i < node->data.call.arg_count; i++)
+				free(arg_type_strs[i]);
+			free(arg_type_strs);
+			free(arg_values);
+			free(is_constant);
+		}
 		free(return_type);
 
 		// Return temp for non-void, -1 for void
@@ -2633,6 +2672,16 @@ void generate_llvm_ir(ast_node_t *ast, FILE *output)
 				func_sym->is_function_defined = 0;
 				func_sym->param_count = decl->data.function.param_count;
 				func_sym->is_variadic = decl->data.function.is_variadic;
+
+				if (decl->data.function.param_count > 0) {
+					func_sym->param_symbols =
+						malloc(sizeof(ast_node_t *) * decl->data.function.param_count);
+					for (int k = 0; k < decl->data.function.param_count; k++) {
+						func_sym->param_symbols[k] = decl->data.function.params[k];
+					}
+				} else {
+					func_sym->param_symbols = NULL;
+				}
 			}
 		}
 	}
