@@ -1207,7 +1207,19 @@ static void traverse_identifier(ast_node_t *node, symbol_table_t *table)
 	}
 }
 
-static void traverse_assignment(ast_node_t *node, symbol_table_t *table) {
+static void traverse_assignment(ast_node_t *node, symbol_table_t *table) {  
+    // Check for NULL lvalue before dereferencing  
+    if (node->data.assignment.lvalue == NULL) {  
+        fprintf(stderr, "Semantic Error: Assignment missing lvalue at line %d\n", node->line_number);  
+        error_count++;  
+        return;  
+    }
+    if (node->data.assignment.value == NULL) {  
+		fprintf(stderr, "Semantic Error: Assignment missing value at line %d\n", node->line_number);  
+		error_count++;  
+		return;  
+	}
+	
     // Traverse both sides first
     traverse_node(node->data.assignment.lvalue, table);
     traverse_node(node->data.assignment.value, table);
