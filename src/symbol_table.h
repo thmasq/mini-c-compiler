@@ -59,6 +59,9 @@ typedef struct symbol {
 	// Enum information
 	int enum_value; // For enum constants
 
+	// Bit field information
+	int bit_position; // Position within the storage unit
+
 	// Label information
 	char *label_name; // For goto labels
 	int label_defined;
