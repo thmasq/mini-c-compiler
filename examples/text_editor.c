@@ -162,7 +162,7 @@ void editor_row_insert_char(int at, int c)
 
 	free(e_row_chars[row_idx]);
 	e_row_chars[row_idx] = new_str;
-	e_row_size[row_idx]++;
+	e_row_size[row_idx] = e_row_size[row_idx] + 1;
 	e_dirty = 1;
 }
 
@@ -180,7 +180,7 @@ void editor_row_del_char(int at)
 	}
 
 	memmove(e_row_chars[row_idx] + at, e_row_chars[row_idx] + at + 1, e_row_size[row_idx] - at);
-	e_row_size[row_idx]--;
+	e_row_size[row_idx] = e_row_size[row_idx] - 1;
 	e_dirty = 1;
 }
 
