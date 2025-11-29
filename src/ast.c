@@ -1009,14 +1009,16 @@ static void traverse_function(ast_node_t *node, symbol_table_t *table)
     // Enter function scope
     enter_scope(table);
 
-    // Add function to symbol table
-    symbol_t *func_sym = add_symbol(table, node->data.function.name, SYM_FUNCTION,
-                                     node->data.function.return_type);
-    
-    if (func_sym) {
+    // Lookup function symbol in symbol table (already added in PASS 1)
+    symbol_t *func_sym = find_symbol(table, node->data.function.name);
+    if (func_sym && func_sym->sym_type == SYM_FUNCTION) {
         func_sym->is_function_defined = 1;
         func_sym->param_count = node->data.function.param_count;
         func_sym->param_symbols = node->data.function.params;
+    } else {
+        fprintf(stderr, "Semantic Error: Function '%s' not found in symbol table at line %d\n",
+                node->data.function.name, node->line_number);
+        error_count++;
     }
 
     // Process parameters: ADD THEM TO THE SYMBOL TABLE

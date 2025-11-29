@@ -62,7 +62,7 @@ O Valgrind possui ferramentas que detectam erros decorrentes do uso incorreto da
 #### Resultados
 
 | Métrica | Antes | Depois |
-|---------|-------|--------|
+| -------- | ------- | -------- |
 | Vazamentos definitivos | ~1.2 KB | **0 bytes** ✅ |
 | Vazamentos possíveis | ~3.4 KB | **0 bytes** ✅ |
 | Acessos inválidos | 12 casos | **0 casos** ✅ |
