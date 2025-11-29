@@ -390,15 +390,12 @@ static int cast_value(int val_temp, type_info_t *src_type, type_info_t *dest_typ
 			// Sign extend (e.g., int to long)
 			fprintf(ctx.output, "  %%t%d = sext %s %%t%d to %s\n", new_temp, src_str, val_temp, dest_str);
 		}
-	}
-	else if ((src_type->pointer_level > 0 || src_type->is_array) && dest_str[0] == 'i' &&
-		 strchr(dest_str, '*') == NULL) {
+	} else if ((src_type->pointer_level > 0 || src_type->is_array) && dest_str[0] == 'i' &&
+		   strchr(dest_str, '*') == NULL) {
 		fprintf(ctx.output, "  %%t%d = ptrtoint %s %%t%d to %s\n", new_temp, src_str, val_temp, dest_str);
-	}
-	else if (src_str[0] == 'i' && strchr(src_str, '*') == NULL && dest_type->pointer_level > 0) {
+	} else if (src_str[0] == 'i' && strchr(src_str, '*') == NULL && dest_type->pointer_level > 0) {
 		fprintf(ctx.output, "  %%t%d = inttoptr %s %%t%d to %s\n", new_temp, src_str, val_temp, dest_str);
-	}
-	else {
+	} else {
 		fprintf(ctx.output, "  %%t%d = bitcast %s %%t%d to %s\n", new_temp, src_str, val_temp, dest_str);
 	}
 

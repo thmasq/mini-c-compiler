@@ -738,6 +738,7 @@ int is_compatible_type(type_info_t *type1, type_info_t *type2)
 }
 
 // Get expression type (returns a deep copy that must be freed)
+// Get expression type (returns a deep copy that must be freed)
 type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table)
 {
 	if (!expr) {
@@ -848,7 +849,10 @@ type_info_t get_expression_type(ast_node_t *expr, symbol_table_t *table)
 
 	case AST_ARRAY_ACCESS: {
 		type_info_t array_type = get_expression_type(expr->data.array_access.array, table);
-		if (array_type.pointer_level > 0) {
+
+		if (array_type.is_array) {
+			array_type.is_array = 0;
+		} else if (array_type.pointer_level > 0) {
 			array_type.pointer_level--;
 		}
 		return array_type;
