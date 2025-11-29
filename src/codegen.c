@@ -357,6 +357,16 @@ static int convert_to_boolean(ast_node_t *expr, int expr_temp)
 static int cast_value(int val_temp, type_info_t *src_type, type_info_t *dest_type)
 {
 	char *src_str = get_llvm_type_string(src_type);
+
+	if (src_type->is_array) {
+		char *decayed_ptr = malloc(strlen(src_str) + 2);
+		if (decayed_ptr) {
+			sprintf(decayed_ptr, "%s*", src_str);
+			free(src_str);
+			src_str = decayed_ptr;
+		}
+	}
+
 	char *dest_str = get_llvm_type_string(dest_type);
 
 	if (strcmp(src_str, dest_str) == 0) {
@@ -380,14 +390,15 @@ static int cast_value(int val_temp, type_info_t *src_type, type_info_t *dest_typ
 			// Sign extend (e.g., int to long)
 			fprintf(ctx.output, "  %%t%d = sext %s %%t%d to %s\n", new_temp, src_str, val_temp, dest_str);
 		}
-	} else if (src_type->pointer_level > 0 && dest_str[0] == 'i' && strchr(dest_str, '*') == NULL) {
-		// Pointer to Int
+	}
+	else if ((src_type->pointer_level > 0 || src_type->is_array) && dest_str[0] == 'i' &&
+		 strchr(dest_str, '*') == NULL) {
 		fprintf(ctx.output, "  %%t%d = ptrtoint %s %%t%d to %s\n", new_temp, src_str, val_temp, dest_str);
-	} else if (src_str[0] == 'i' && strchr(src_str, '*') == NULL && dest_type->pointer_level > 0) {
-		// Int to Pointer
+	}
+	else if (src_str[0] == 'i' && strchr(src_str, '*') == NULL && dest_type->pointer_level > 0) {
 		fprintf(ctx.output, "  %%t%d = inttoptr %s %%t%d to %s\n", new_temp, src_str, val_temp, dest_str);
-	} else {
-		// Fallback: Bitcast (generic, includes pointer-to-pointer)
+	}
+	else {
 		fprintf(ctx.output, "  %%t%d = bitcast %s %%t%d to %s\n", new_temp, src_str, val_temp, dest_str);
 	}
 
