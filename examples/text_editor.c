@@ -144,22 +144,22 @@ void editor_row_insert_char(int at, int c)
 {
 	int row_idx;
 	char *new_str;
-	
+
 	row_idx = e_cy;
 	if (row_idx < 0 || row_idx >= e_numrows) {
 		return;
 	}
-	
+
 	if (at < 0 || at > e_row_size[row_idx]) {
 		at = e_row_size[row_idx];
 	}
-	
+
 	new_str = malloc(e_row_size[row_idx] + 2);
 	memcpy(new_str, e_row_chars[row_idx], at);
 	new_str[at] = c;
 	memcpy(new_str + at + 1, e_row_chars[row_idx] + at, e_row_size[row_idx] - at);
 	new_str[e_row_size[row_idx] + 1] = '\0';
-	
+
 	free(e_row_chars[row_idx]);
 	e_row_chars[row_idx] = new_str;
 	e_row_size[row_idx]++;
@@ -169,16 +169,16 @@ void editor_row_insert_char(int at, int c)
 void editor_row_del_char(int at)
 {
 	int row_idx;
-	
+
 	row_idx = e_cy;
 	if (row_idx < 0 || row_idx >= e_numrows) {
 		return;
 	}
-	
+
 	if (at < 0 || at >= e_row_size[row_idx]) {
 		return;
 	}
-	
+
 	memmove(e_row_chars[row_idx] + at, e_row_chars[row_idx] + at + 1, e_row_size[row_idx] - at);
 	e_row_size[row_idx]--;
 	e_dirty = 1;
@@ -200,42 +200,42 @@ void editor_insert_newline()
 	int i;
 	char *new_row;
 	int row_len;
-	
+
 	if (e_cy >= e_numrows) {
 		editor_append_row("", 0);
 		e_cy++;
 		e_cx = 0;
 		return;
 	}
-	
+
 	new_size_int = (e_numrows + 1) * 4;
 	new_size_ptr = (e_numrows + 1) * 8;
-	
+
 	e_row_size = realloc(e_row_size, new_size_int);
 	e_row_chars = realloc(e_row_chars, new_size_ptr);
-	
+
 	for (i = e_numrows; i > e_cy + 1; i--) {
 		e_row_size[i] = e_row_size[i - 1];
 		e_row_chars[i] = e_row_chars[i - 1];
 	}
-	
+
 	row_len = e_row_size[e_cy] - e_cx;
 	if (row_len < 0) {
 		row_len = 0;
 	}
-	
+
 	new_row = malloc(row_len + 1);
 	if (row_len > 0) {
 		memcpy(new_row, e_row_chars[e_cy] + e_cx, row_len);
 	}
 	new_row[row_len] = '\0';
-	
+
 	e_row_size[e_cy + 1] = row_len;
 	e_row_chars[e_cy + 1] = new_row;
-	
+
 	e_row_size[e_cy] = e_cx;
 	e_row_chars[e_cy][e_cx] = '\0';
-	
+
 	e_numrows++;
 	e_cy++;
 	e_cx = 0;
@@ -246,40 +246,40 @@ void editor_del_char()
 {
 	int prev_len;
 	char *combined;
-	
+
 	if (e_cy >= e_numrows) {
 		return;
 	}
-	
+
 	if (e_cx == 0 && e_cy == 0) {
 		return;
 	}
-	
+
 	if (e_cx > 0) {
 		editor_row_del_char(e_cx - 1);
 		e_cx--;
 	} else {
 		int i;
-		
+
 		e_cx = e_row_size[e_cy - 1];
 		prev_len = e_row_size[e_cy - 1];
-		
+
 		combined = malloc(prev_len + e_row_size[e_cy] + 1);
 		memcpy(combined, e_row_chars[e_cy - 1], prev_len);
 		memcpy(combined + prev_len, e_row_chars[e_cy], e_row_size[e_cy]);
 		combined[prev_len + e_row_size[e_cy]] = '\0';
-		
+
 		free(e_row_chars[e_cy - 1]);
 		e_row_chars[e_cy - 1] = combined;
 		e_row_size[e_cy - 1] = prev_len + e_row_size[e_cy];
-		
+
 		free(e_row_chars[e_cy]);
-		
+
 		for (i = e_cy; i < e_numrows - 1; i++) {
 			e_row_size[i] = e_row_size[i + 1];
 			e_row_chars[i] = e_row_chars[i + 1];
 		}
-		
+
 		e_numrows--;
 		e_cy--;
 		e_dirty = 1;
@@ -293,26 +293,26 @@ void editor_open(char *filename)
 	int nread;
 	int i;
 	int line_start;
-	
+
 	fd = open(filename, MY_O_RDWR);
 	if (fd == -1) {
 		return;
 	}
-	
+
 	line_start = 0;
 	while (1) {
 		nread = read(fd, buf, 1024);
 		if (nread <= 0) {
 			break;
 		}
-		
+
 		for (i = 0; i < nread; i++) {
 			if (buf[i] == '\n') {
 				editor_append_row(buf + line_start, i - line_start);
 				line_start = i + 1;
 			}
 		}
-		
+
 		if (line_start < nread) {
 			editor_append_row(buf + line_start, nread - line_start);
 			line_start = 0;
@@ -320,7 +320,7 @@ void editor_open(char *filename)
 			line_start = 0;
 		}
 	}
-	
+
 	close(fd);
 	e_dirty = 0;
 }
@@ -330,25 +330,25 @@ void editor_save()
 	int fd;
 	int i;
 	int len;
-	
+
 	if (e_filename == 0) {
 		snprintf(e_statusmsg, 80, "No filename");
 		return;
 	}
-	
+
 	fd = open(e_filename, MY_O_RDWR | MY_O_CREAT | MY_O_TRUNC);
 	if (fd == -1) {
 		snprintf(e_statusmsg, 80, "Can't save! Error opening file");
 		return;
 	}
-	
+
 	len = 0;
 	for (i = 0; i < e_numrows; i++) {
 		write(fd, e_row_chars[i], e_row_size[i]);
 		write(fd, "\n", 1);
 		len = len + e_row_size[i] + 1;
 	}
-	
+
 	close(fd);
 	e_dirty = 0;
 	snprintf(e_statusmsg, 80, "%d bytes written", len);
@@ -525,9 +525,8 @@ void editor_process_keypress()
 		return;
 	}
 
-	if (c == KEY_ARROW_UP || c == KEY_ARROW_DOWN || c == KEY_ARROW_LEFT || 
-	    c == KEY_ARROW_RIGHT || c == KEY_HOME || c == KEY_END || 
-	    c == KEY_PAGE_UP || c == KEY_PAGE_DOWN) {
+	if (c == KEY_ARROW_UP || c == KEY_ARROW_DOWN || c == KEY_ARROW_LEFT || c == KEY_ARROW_RIGHT || c == KEY_HOME ||
+	    c == KEY_END || c == KEY_PAGE_UP || c == KEY_PAGE_DOWN) {
 		editor_move_cursor(c);
 		return;
 	}
@@ -560,28 +559,26 @@ void editor_draw_status_bar()
 	char rstatus[80];
 	int len;
 	int rlen;
-	
+
 	ab_append("\x1b[7m", 4);
-	
-	len = snprintf(status, 80, "%.20s - %d lines %s",
-		e_filename ? e_filename : "[No Name]",
-		e_numrows,
-		e_dirty ? "(modified)" : "");
-	
+
+	len = snprintf(status, 80, "%.20s - %d lines %s", e_filename ? e_filename : "[No Name]", e_numrows,
+		       e_dirty ? "(modified)" : "");
+
 	rlen = snprintf(rstatus, 80, "%d/%d", e_cy + 1, e_numrows);
-	
+
 	if (len > e_screencols) {
 		len = e_screencols;
 	}
 	ab_append(status, len);
-	
+
 	while (len < e_screencols) {
 		if (e_screencols - len == rlen) {
 			ab_append(rstatus, rlen);
 			break;
-		}  			ab_append(" ", 1);
-			len++;
-	
+		}
+		ab_append(" ", 1);
+		len++;
 	}
 	ab_append("\x1b[m", 3);
 	ab_append("\r\n", 2);
@@ -590,7 +587,7 @@ void editor_draw_status_bar()
 void editor_draw_message_bar()
 {
 	int msglen;
-	
+
 	ab_append("\x1b[K", 3);
 	msglen = strlen(e_statusmsg);
 	if (msglen > e_screencols) {
