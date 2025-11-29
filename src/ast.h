@@ -524,6 +524,12 @@ void generate_llvm_ir(ast_node_t *ast, FILE *output);
 int check_types(ast_node_t *ast, struct symbol_table *table);
 int check_expression_types(ast_node_t *expr, struct symbol_table *table);
 int check_statement_types(ast_node_t *stmt, struct symbol_table *table);
+int check_types(ast_node_t *ast, struct symbol_table *table);
+int check_expression_types(ast_node_t *expr, struct symbol_table *table);
+int check_statement_types(ast_node_t *stmt, struct symbol_table *table);
+
+// Simple optimization pass (constant folding)
+ast_node_t *optimize_ast(ast_node_t *ast);
 
 // External references
 extern FILE *yyin;

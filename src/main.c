@@ -529,6 +529,13 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	if (ast_root && (error_count == 0 || force_compilation) && optimization_level > 0) {
+        if (verbose) {
+            printf("Phase 2.5: AST optimization (constant folding)...\n");
+        }
+        ast_root = optimize_ast(ast_root);
+    }
+	
 	// Generate code if parsing was successful or forced
 	if (error_count == 0 || force_compilation) {
 		if (verbose) {
