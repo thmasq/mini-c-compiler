@@ -1,12 +1,12 @@
 # Problemas Encontrados e Soluções Adotadas
 
-Este documento detalha os principais desafios enfrentados durante o desenvolvimento do compilador e as estratégias adotadas para resolvê-los.
+Este documento detalha os principais desafios enfrentados durante o desenvolvimento do compilador, além das estratégias adotadas para (se) resolvê-los.
 
 ## Problema: Diagnóstico de *Bugs* de Memória
 
 ### Contexto
 
-Uma eventual preocupação central no projeto, a segurança de memória é crítica em compiladores C devido ao uso intensivo de alocação dinâmica para estruturas como AST (Abstract Syntax Tree), tabelas de símbolos e gerenciamento de escopos, além de compilações paralelizadas – em múltiplas *threads* simultâneas –. Erros de memória não apenas comprometem a estabilidade do compilador, mas podem levar a:
+Uma eventual preocupação central no projeto, a segurança de memória é crítica em compiladores (como os de) C devido ao uso intensivo de alocação dinâmica para estruturas como AST (Abstract Syntax Tree), tabelas de símbolos e gerenciamento de escopos, além de compilações paralelizadas – em múltiplas *threads* simultâneas –. Erros de memória não apenas comprometem a estabilidade do compilador, mas podem levar a:
 
 **Vazamentos de memória**:
 Áreas de memória nunca liberadas após uso, gerando chamados *ponteiros soltos* que, criticamente, degradam o desempenho e podem levar à exaustão de memória em compilações de arquivos/projetos grandes.
